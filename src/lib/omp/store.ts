@@ -1,0 +1,892 @@
+import { invoke } from "@tauri-apps/api/core";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { create } from "zustand";
+import { omp, RpcFailure, type OmpClientEvent } from "./client";
+import type {
+  AgentMessage,
+  AvailableCommand,
+  ExtensionUIRequest,
+  ExtensionUIResponse,
+  GoalModeState,
+  ImageContent,
+  Model,
+  PromptResultFrame,
+  RpcCommand,
+  RpcFrame,
+  RpcSessionState,
+  SessionStats,
+  SessionSummary,
+  StartInfo,
+  TodoPhase,
+} from "./types";
+import { firstLine, modelLabel, stripPrivateUse } from "./format";
+
+const LAST_CWD_KEY = "ompd:lastCwd";
+const PREFS_KEY = "ompd:prefs";
+
+export interface Preferences {
+  binary: string;
+  extraArgs: string;
+  model: string;
+  theme: "dark" | "light";
+}
+
+const DEFAULT_PREFS: Preferences = { binary: "omp", extraArgs: "", model: "", theme: "dark" };
+
+export function loadPreferences(): Preferences {
+  try {
+    const raw = localStorage.getItem(PREFS_KEY);
+    if (!raw) return DEFAULT_PREFS;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return DEFAULT_PREFS;
+    return {
+      binary: typeof (parsed as Preferences).binary === "string" ? (parsed as Preferences).binary : DEFAULT_PREFS.binary,
+      extraArgs:
+        typeof (parsed as Preferences).extraArgs === "string" ? (parsed as Preferences).extraArgs : DEFAULT_PREFS.extraArgs,
+      model: typeof (parsed as Preferences).model === "string" ? (parsed as Preferences).model : DEFAULT_PREFS.model,
+      theme: (parsed as Preferences).theme === "light" ? "light" : "dark",
+    };
+  } catch {
+    return DEFAULT_PREFS;
+  }
+}
+
+export function savePreferences(prefs: Preferences) {
+  localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+}
+
+export type DialogRequest = Extract<
+  ExtensionUIRequest,
+  { method: "select" | "confirm" | "input" | "editor" | "ask" }
+>;
+
+export interface Toast {
+  id: number;
+  kind: "info" | "success" | "warning" | "error";
+  title?: string;
+  message: string;
+}
+
+export interface ToolRun {
+  toolCallId: string;
+  toolName: string;
+  args?: Record<string, unknown>;
+  status: "running" | "success" | "error";
+  startedAt: number;
+  updatedAt: number;
+  output?: string;
+  details?: unknown;
+}
+
+export interface NoticeItem {
+  id: number;
+  kind: "info" | "warning" | "error" | "progress";
+  message: string;
+  at: number;
+}
+
+export interface PendingMessage {
+  messageId: string;
+  message: AgentMessage;
+}
+
+export type ConnectionStatus = "idle" | "starting" | "ready" | "error" | "stopped";
+
+interface AppState {
+  initialized: boolean;
+  status: ConnectionStatus;
+  error?: string;
+  cwd?: string;
+  startInfo?: StartInfo;
+  preferences: Preferences;
+
+  session?: RpcSessionState;
+  stats?: SessionStats;
+  messages: AgentMessage[];
+  messageKeys: Set<string>;
+  pending: PendingMessage[];
+  toolRuns: Record<string, ToolRun>;
+  queue: { steering: string[]; followUp: string[]; liveSteered?: number };
+  busy: boolean;
+
+  commands: AvailableCommand[];
+  thinkingLevels: string[];
+  models?: Model[];
+  modelsLoading: boolean;
+  modelsError?: string;
+
+  sessions: SessionSummary[];
+  sessionsLoading: boolean;
+
+  dialogs: DialogRequest[];
+  notifications: Toast[];
+  notices: NoticeItem[];
+  statusMarks: Record<string, string>;
+  widgets: Record<string, string[]>;
+  diagnostics: string[];
+  editorText?: string;
+  editorToken: number;
+
+  bootstrap: () => Promise<void>;
+  connect: (cwd: string, prefs?: Partial<Preferences>) => Promise<void>;
+  restart: () => Promise<void>;
+  disconnect: () => Promise<void>;
+  updatePreferences: (partial: Partial<Preferences>) => void;
+  openProjectDialog: () => Promise<void>;
+
+  refreshAll: () => Promise<void>;
+  refreshState: () => Promise<void>;
+  refreshMessages: () => Promise<void>;
+  loadSessions: () => Promise<void>;
+
+  prompt: (text: string, images?: ImageContent[], behavior?: "steer" | "followUp") => Promise<boolean>;
+  abort: () => Promise<void>;
+  compact: () => Promise<void>;
+  removeQueued: (message: string, queue: "steering" | "followUp") => Promise<void>;
+
+  newSession: () => Promise<void>;
+  switchSession: (path: string) => Promise<void>;
+  renameSession: (name: string) => Promise<void>;
+
+  fetchModels: () => Promise<void>;
+  setModel: (provider: string, id: string) => Promise<void>;
+  setThinkingLevel: (level: string) => Promise<void>;
+
+  answerDialog: (dialogId: string, response: Omit<ExtensionUIResponse, "type" | "id">) => Promise<void>;
+  cancelDialog: (dialogId: string) => Promise<void>;
+  dismissToast: (id: number) => void;
+  setEditorText: (text: string) => void;
+
+  applyFrame: (frame: RpcFrame) => void;
+  handleEvent: (event: OmpClientEvent) => void;
+}
+
+let toastSeq = 0;
+let noticeSeq = 0;
+let initialized = false;
+let connectTicket = 0;
+let refreshing = false;
+let refreshAgain = false;
+
+function messageKey(message: AgentMessage): string {
+  const timestamp = typeof message.timestamp === "number" ? message.timestamp : 0;
+  if (message.role === "toolResult") return `toolResult:${message.toolCallId}:${timestamp}`;
+  if (message.role === "assistant") {
+    const firstCall = Array.isArray(message.content)
+      ? message.content.find((block) => block.type === "toolCall")
+      : undefined;
+    const callId = firstCall && "id" in firstCall ? String(firstCall.id) : "";
+    return `assistant:${timestamp}:${callId}`;
+  }
+  return `${message.role}:${timestamp}`;
+}
+
+function withMessageKeys(messages: AgentMessage[]): { messages: AgentMessage[]; messageKeys: Set<string> } {
+  return { messages, messageKeys: new Set(messages.map(messageKey)) };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function sleep(ms: number): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  window.setTimeout(resolve, ms);
+  return promise;
+}
+
+function describeError(error: unknown): string {
+  if (error instanceof RpcFailure) return error.message;
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+export const useAppStore = create<AppState>()((set, get) => ({
+  initialized: false,
+  status: "idle",
+  preferences: loadPreferences(),
+
+  messages: [],
+  messageKeys: new Set<string>(),
+  pending: [],
+  toolRuns: {},
+  queue: { steering: [], followUp: [] },
+  busy: false,
+
+  commands: [],
+  thinkingLevels: [],
+  modelsLoading: false,
+  sessions: [],
+  sessionsLoading: false,
+
+  dialogs: [],
+  notifications: [],
+  notices: [],
+  statusMarks: {},
+  widgets: {},
+  diagnostics: [],
+  editorToken: 0,
+
+  bootstrap: async () => {
+    if (initialized) return;
+    initialized = true;
+    set({ initialized: true });
+    omp.on((event) => useAppStore.getState().handleEvent(event));
+    const cwd = localStorage.getItem(LAST_CWD_KEY);
+    if (!cwd) {
+      const initial = await invoke<string | null>("initial_folder");
+      if (!initial) {
+        set({ status: "idle" });
+        return;
+      }
+      await get().connect(initial);
+      return;
+    }
+    await get().connect(cwd);
+  },
+
+  connect: async (cwd, prefs) => {
+    const ticket = ++connectTicket;
+    const preferences = { ...get().preferences, ...prefs };
+    set({
+      status: "starting",
+      error: undefined,
+      cwd,
+      preferences,
+      messages: withMessageKeys([]).messages,
+      messageKeys: new Set<string>(),
+      pending: [],
+      toolRuns: {},
+      dialogs: [],
+      notices: [],
+      statusMarks: {},
+      widgets: {},
+      session: undefined,
+      stats: undefined,
+    });
+    savePreferences(preferences);
+    try {
+      const extraArgs = preferences.extraArgs
+        .split(" ")
+        .map((arg) => arg.trim())
+        .filter(Boolean);
+      const info = await omp.start({
+        cwd,
+        binary: preferences.binary.trim() || "omp",
+        model: preferences.model.trim() || null,
+        extraArgs,
+      });
+      if (ticket !== connectTicket) return;
+      localStorage.setItem(LAST_CWD_KEY, cwd);
+      set({ status: "ready", startInfo: info, cwd: info.cwd });
+      await omp.send({ type: "set_ask_dialog", enabled: true }).catch(() => {});
+      await get().refreshAll();
+      await get().loadSessions();
+    } catch (error) {
+      if (ticket !== connectTicket) return;
+      set({ status: "error", error: describeError(error) });
+    }
+  },
+
+  restart: async () => {
+    const cwd = get().cwd;
+    const previousSession = get().session?.sessionFile;
+    if (!cwd) return;
+    await get().connect(cwd);
+    if (previousSession) {
+      try {
+        await omp.send({ type: "switch_session", sessionPath: previousSession });
+        await get().refreshAll();
+        await get().loadSessions();
+      } catch (error) {
+        pushToast(set, "warning", `Could not reopen the previous session: ${describeError(error)}`);
+      }
+    }
+  },
+
+  disconnect: async () => {
+    await omp.stop();
+    set({ status: "stopped", busy: false, queue: { steering: [], followUp: [] } });
+  },
+
+  updatePreferences: (partial) => {
+    const preferences = { ...get().preferences, ...partial };
+    savePreferences(preferences);
+    set({ preferences });
+  },
+
+  openProjectDialog: async () => {
+    const selected = await openDialog({ directory: true, multiple: false, title: "Open a project folder" });
+    if (typeof selected === "string" && selected) {
+      await get().connect(selected);
+    }
+  },
+
+  refreshAll: async () => {
+    if (refreshing) {
+      refreshAgain = true;
+      return;
+    }
+    refreshing = true;
+    const generation = omp.generation;
+    try {
+      const [state, messages, stats, levels, commands] = await Promise.all([
+        omp.send<RpcSessionState>({ type: "get_state" }).catch(() => undefined),
+        omp.send<{ messages: AgentMessage[] }>({ type: "get_messages" }).catch(() => undefined),
+        omp.send<SessionStats>({ type: "get_session_stats" }).catch(() => undefined),
+        omp.send<{ levels: string[] }>({ type: "get_available_thinking_levels" }).catch(() => undefined),
+        omp.send<{ commands: AvailableCommand[] }>({ type: "get_available_commands" }).catch(() => undefined),
+      ]);
+      if (omp.generation !== generation) return;
+      const session = state?.data;
+      const transcript = messages?.data?.messages;
+      set((current) => ({
+        session: session ?? current.session,
+        stats: stats?.data ?? current.stats,
+        ...(transcript ? withMessageKeys(transcript) : { messages: current.messages, messageKeys: current.messageKeys }),
+        pending: transcript ? [] : current.pending,
+        thinkingLevels: levels?.data?.levels ?? current.thinkingLevels,
+        commands: commands?.data?.commands ?? current.commands,
+        queue: session?.queuedMessages
+          ? {
+              steering: session.queuedMessages.steering ?? [],
+              followUp: session.queuedMessages.followUp ?? [],
+              liveSteered: session.queuedMessages.liveSteered,
+            }
+          : current.queue,
+        busy: Boolean(session?.isStreaming ?? current.busy),
+        toolRuns: transcript ? {} : current.toolRuns,
+      }));
+      if (session?.sessionName) document.title = `${session.sessionName} — omp-d`;
+    } catch (error) {
+      if (omp.generation === generation && get().status === "ready") {
+        pushToast(set, "warning", describeError(error));
+      }
+    } finally {
+      refreshing = false;
+      if (refreshAgain) {
+        refreshAgain = false;
+        void get().refreshAll();
+      }
+    }
+  },
+
+  refreshState: async () => {
+    try {
+      const res = await omp.send<RpcSessionState>({ type: "get_state" });
+      if (!res.data) return;
+      const session = res.data;
+      document.title = session.sessionName ? `${stripPrivateUse(session.sessionName)} — omp-d` : "omp-d — Oh My Pi";
+      set((state) => ({
+        session,
+        busy: Boolean(session.isStreaming),
+        queue: {
+          steering: session.queuedMessages?.steering ?? state.queue.steering,
+          followUp: session.queuedMessages?.followUp ?? state.queue.followUp,
+          liveSteered: session.queuedMessages?.liveSteered,
+        },
+      }));
+    } catch {
+      // State refresh is best-effort; command failures surface through toasts.
+    }
+  },
+
+  refreshMessages: async () => {
+    try {
+      const res = await omp.send<{ messages: AgentMessage[] }>({ type: "get_messages" });
+      set({ ...withMessageKeys(res.data?.messages ?? []), pending: [] });
+    } catch {
+      // ignore
+    }
+  },
+
+  loadSessions: async () => {
+    const cwd = get().cwd;
+    if (!cwd) return;
+    set({ sessionsLoading: true });
+    try {
+      const sessions = await invoke<SessionSummary[]>("list_sessions", { cwd, limit: 40 });
+      set({ sessions, sessionsLoading: false });
+    } catch (error) {
+      set({ sessionsLoading: false });
+      pushToast(set, "warning", `Session list failed: ${describeError(error)}`);
+    }
+  },
+
+  prompt: async (text, images, behavior) => {
+    const trimmed = text.trim();
+    if (!trimmed) return false;
+    const shouldTitle = !get().session?.sessionName && (get().session?.messageCount ?? 0) === 0 && !trimmed.startsWith("/");
+    set({ busy: true });
+    try {
+      const command: RpcCommand = { type: "prompt", message: trimmed };
+      if (images?.length) command.images = images;
+      if (behavior) command.streamingBehavior = behavior;
+      const response = await omp.send<{ agentInvoked?: boolean }>(command).catch((error) => {
+        set({ busy: false });
+        throw error;
+      });
+      if (response.data?.agentInvoked === false) {
+        set({ busy: false });
+        await get().refreshAll();
+      }
+      if (shouldTitle) {
+        const name = firstLine(trimmed, 64);
+        await omp.send({ type: "set_session_name", name }).catch(() => {});
+        await get().refreshState();
+        await get().loadSessions();
+      }
+      return true;
+    } catch (error) {
+      pushToast(set, "error", describeError(error));
+      return false;
+    }
+  },
+
+  abort: async () => {
+    try {
+      await omp.send({ type: "abort" }, { timeoutMs: 30_000 });
+      await get().refreshState();
+    } catch (error) {
+      pushToast(set, "error", describeError(error));
+    }
+  },
+
+  compact: async () => {
+    set({ busy: true });
+    pushNotice(set, "progress", "Compacting conversation…");
+    try {
+      await omp.send({ type: "compact", customInstructions: "" }, { timeoutMs: 300_000 });
+      pushToast(set, "success", "Compaction finished.");
+      await get().refreshAll();
+    } catch (error) {
+      pushToast(set, "error", describeError(error));
+    } finally {
+      set({ busy: false });
+    }
+  },
+
+  removeQueued: async (message, queue) => {
+    try {
+      await omp.send({ type: "remove_queued_message", message, queue });
+    } catch (error) {
+      pushToast(set, "error", describeError(error));
+    }
+  },
+
+  newSession: async () => {
+    try {
+      const res = await omp.send<{ cancelled: boolean }>({ type: "new_session" });
+      if (res.data?.cancelled) {
+        pushToast(set, "warning", "Session change was cancelled by an extension.");
+        return;
+      }
+      set({
+        messages: [],
+        messageKeys: new Set<string>(),
+        pending: [],
+        toolRuns: {},
+        notices: [],
+        stats: undefined,
+        dialogs: [],
+        statusMarks: {},
+        widgets: {},
+      });
+      await get().refreshAll();
+      await get().loadSessions();
+    } catch (error) {
+      pushToast(set, "error", describeError(error));
+    }
+  },
+
+  switchSession: async (path) => {
+    try {
+      const res = await omp.send<{ cancelled: boolean }>({ type: "switch_session", sessionPath: path });
+      if (res.data?.cancelled) {
+        pushToast(set, "warning", "Session switch was cancelled.");
+        return;
+      }
+      set({
+        messages: [],
+        messageKeys: new Set<string>(),
+        pending: [],
+        toolRuns: {},
+        notices: [],
+        stats: undefined,
+        dialogs: [],
+        statusMarks: {},
+        widgets: {},
+      });
+      await get().refreshAll();
+      await get().loadSessions();
+    } catch (error) {
+      pushToast(set, "error", describeError(error));
+    }
+  },
+
+  renameSession: async (name) => {
+    const value = name.trim();
+    if (!value) return;
+    try {
+      await omp.send({ type: "set_session_name", name: value });
+      await get().refreshState();
+      await get().loadSessions();
+    } catch (error) {
+      pushToast(set, "error", describeError(error));
+    }
+  },
+
+  fetchModels: async () => {
+    if (get().modelsLoading) return;
+    set({ modelsLoading: true, modelsError: undefined });
+    const attempts = 3;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        const res = await omp.send<{ models: Model[] }>({ type: "get_available_models" }, { timeoutMs: 120_000 });
+        set({ models: res.data?.models ?? [], modelsLoading: false });
+        return;
+      } catch (error) {
+        if (attempt === attempts) {
+          set({ modelsLoading: false, modelsError: describeError(error) });
+          return;
+        }
+        await sleep(1500);
+      }
+    }
+  },
+
+  setModel: async (provider, id) => {
+    try {
+      const res = await omp.send<Model>({ type: "set_model", provider, modelId: id });
+      await get().refreshState();
+      pushToast(set, "success", `Model set to ${modelLabel(res.data)}.`);
+    } catch (error) {
+      pushToast(set, "error", describeError(error));
+    }
+  },
+
+  setThinkingLevel: async (level) => {
+    try {
+      await omp.send({ type: "set_thinking_level", level });
+      await get().refreshState();
+    } catch (error) {
+      pushToast(set, "error", describeError(error));
+    }
+  },
+
+  answerDialog: async (dialogId, response) => {
+    set((state) => ({ dialogs: state.dialogs.filter((dialog) => dialog.id !== dialogId) }));
+    try {
+      await omp.sendRaw({ type: "extension_ui_response", id: dialogId, ...response });
+    } catch (error) {
+      pushToast(set, "error", describeError(error));
+    }
+  },
+
+  cancelDialog: async (dialogId) => {
+    await get().answerDialog(dialogId, { cancelled: true });
+  },
+
+  dismissToast: (id) => set((state) => ({ notifications: state.notifications.filter((toast) => toast.id !== id) })),
+
+  setEditorText: (text) => set((state) => ({ editorText: text, editorToken: state.editorToken + 1 })),
+
+  applyFrame: (frame) => {
+    switch (frame.type) {
+      case "message_start": {
+        const messageId = String(frame.messageId ?? "");
+        const message = frame.message as AgentMessage | undefined;
+        if (!messageId || !message) return;
+        set((state) => ({
+          pending: [...state.pending.filter((entry) => entry.messageId !== messageId), { messageId, message }],
+        }));
+        return;
+      }
+      case "message_update": {
+        const messageId = String(frame.messageId ?? "");
+        const message = frame.message as AgentMessage | undefined;
+        if (!messageId || !message) return;
+        set((state) => {
+          const exists = state.pending.some((entry) => entry.messageId === messageId);
+          return exists
+            ? { pending: state.pending.map((entry) => (entry.messageId === messageId ? { messageId, message } : entry)) }
+            : { pending: [...state.pending, { messageId, message }] };
+        });
+        return;
+      }
+      case "message_end": {
+        const messageId = String(frame.messageId ?? "");
+        const message = frame.message as AgentMessage | undefined;
+        if (!message) return;
+        set((state) => {
+          const pending = state.pending.filter((entry) => entry.messageId !== messageId);
+          const key = messageKey(message);
+          if (state.messageKeys.has(key)) return { pending };
+          const messageKeys = new Set(state.messageKeys);
+          messageKeys.add(key);
+          return { pending, messages: [...state.messages, message], messageKeys };
+        });
+        return;
+      }
+      case "agent_start":
+        set({ busy: true });
+        return;
+      case "agent_end": {
+        const terminal = frame.isTerminal !== false;
+        if (terminal) set({ busy: false });
+        return;
+      }
+      case "turn_end":
+      case "turn_start":
+        return;
+      case "tool_execution_start":
+        upsertToolRun(set, frame, "running");
+        return;
+      case "tool_execution_update":
+        upsertToolRun(set, frame, "running");
+        return;
+      case "tool_execution_end":
+        upsertToolRun(set, frame, frame.isError ? "error" : "success");
+        return;
+      case "queue_update":
+        set({
+          queue: {
+            steering: Array.isArray(frame.steering) ? (frame.steering as string[]) : [],
+            followUp: Array.isArray(frame.followUp) ? (frame.followUp as string[]) : [],
+            liveSteered: typeof frame.liveSteered === "number" ? frame.liveSteered : undefined,
+          },
+        });
+        return;
+      case "notice": {
+        const level = (frame.level as string) ?? "info";
+        const raw = String(frame.message ?? "").replace(/\s+/g, " ").trim();
+        if (!raw) return;
+        const message = raw.length > 280 ? `${raw.slice(0, 280)}…` : raw;
+        pushNotice(set, level === "error" ? "error" : level === "warning" ? "warning" : "info", message);
+        if (level === "warning" || level === "error") {
+          pushToast(set, level as Toast["kind"], raw.length > 800 ? `${raw.slice(0, 800)}…` : raw);
+        }
+        return;
+      }
+      case "prompt_result": {
+        const result = frame as unknown as PromptResultFrame;
+        if (result.status === "error") {
+          pushToast(set, "error", result.error?.message ?? "The prompt failed.");
+        } else if (result.status === "aborted") {
+          pushNotice(set, "info", "Run aborted.");
+        }
+        if (result.error?.message) pushNotice(set, "error", result.error.message);
+        if (result.sessionSettled) set({ busy: false });
+        return;
+      }
+      case "session_settled":
+        set({ busy: false });
+        void get().refreshAll();
+        void get().loadSessions();
+        return;
+      case "model_changed":
+      case "thinking_level_changed":
+        void get().refreshState();
+        return;
+      case "goal_updated": {
+        const goal = (frame.goal as GoalModeState | null) ?? null;
+        set((state) => (state.session ? { session: { ...state.session, goal } } : {}));
+        return;
+      }
+      case "available_commands_update": {
+        const commands = frame.commands as AvailableCommand[] | undefined;
+        if (commands) set({ commands });
+        return;
+      }
+      case "auto_compaction_start":
+      case "manual_compaction_start":
+        pushNotice(set, "progress", "Compacting conversation…");
+        set({ busy: true });
+        return;
+      case "auto_compaction_end":
+      case "manual_compaction_end": {
+        const frameError = typeof frame.errorMessage === "string" ? frame.errorMessage : undefined;
+        if (frameError) pushToast(set, "warning", frameError);
+        pushNotice(set, "info", "Compaction finished.");
+        void get().refreshAll();
+        return;
+      }
+      case "auto_retry_start":
+        pushNotice(set, "progress", `Retrying request (attempt ${frame.attempt ?? "?"} of ${frame.maxAttempts ?? "?"})…`);
+        return;
+      case "auto_retry_end":
+        if (frame.success === false && typeof frame.finalError === "string") {
+          pushToast(set, "error", frame.finalError);
+        }
+        return;
+      case "extension_ui_request":
+        handleExtensionRequest(frame as unknown as ExtensionUIRequest, set, get);
+        return;
+      case "extension_error":
+        pushToast(set, "warning", `${frame.extensionPath ?? "Extension"}: ${frame.error ?? "failed"}`);
+        return;
+      case "rpc_frame_error":
+        pushToast(set, "warning", String(frame.error ?? "A frame exceeded the transport limit."));
+        return;
+      default:
+        return;
+    }
+  },
+
+  handleEvent: (event) => {
+    switch (event.type) {
+      case "frame":
+        get().applyFrame(event.frame);
+        return;
+      case "ready":
+        set({ status: "ready" });
+        return;
+      case "disconnected":
+        set({ status: "stopped", busy: false, error: event.reason });
+        return;
+      case "protocol":
+        appendDiagnostic(set, `${event.event.kind}: ${event.event.message}`);
+        if (event.event.kind === "protocol_error") pushToast(set, "warning", event.event.message);
+        return;
+      case "stderr":
+        appendDiagnostic(set, event.line);
+        return;
+      case "process":
+        if (event.event.kind === "error") {
+          set({ status: "error", error: event.event.message, busy: false });
+        }
+        return;
+    }
+  },
+}));
+
+/* ---------------------------------------------------------------- helpers */
+
+type SetState = (partial: Partial<AppState> | ((state: AppState) => Partial<AppState>)) => void;
+
+function pushToast(set: SetState, kind: Toast["kind"], message: string, title?: string) {
+  const toast: Toast = { id: ++toastSeq, kind, message, title };
+  set((state) => ({ notifications: [...state.notifications.slice(-6), toast] }));
+  window.setTimeout(() => {
+    useAppStore.setState((state) => ({ notifications: state.notifications.filter((entry) => entry.id !== toast.id) }));
+  }, kind === "error" ? 12_000 : 6000);
+}
+
+function pushNotice(set: SetState, kind: NoticeItem["kind"], message: string) {
+  const notice: NoticeItem = { id: ++noticeSeq, kind, message, at: Date.now() };
+  set((state) => ({ notices: [...state.notices.slice(-80), notice] }));
+}
+
+function appendDiagnostic(set: SetState, line: string) {
+  set((state) => ({ diagnostics: [...state.diagnostics.slice(-200), line] }));
+}
+
+function upsertToolRun(
+  set: SetState,
+  frame: RpcFrame,
+  status: ToolRun["status"],
+) {
+  const toolCallId = String(frame.toolCallId ?? "");
+  const toolName = String(frame.toolName ?? "");
+  if (!toolCallId) return;
+  const previous = useAppStore.getState().toolRuns[toolCallId];
+  const now = Date.now();
+  const result = "result" in frame ? frame.result : "partialResult" in frame ? frame.partialResult : undefined;
+  const output = extractToolOutput(result) ?? previous?.output;
+  const run: ToolRun = {
+    toolCallId,
+    toolName,
+    args: isRecord(frame.args) ? frame.args : previous?.args,
+    status,
+    startedAt: previous?.startedAt ?? now,
+    updatedAt: now,
+    output,
+    details: extractToolDetails(result) ?? previous?.details,
+  };
+  set((state) => ({ toolRuns: { ...state.toolRuns, [toolCallId]: run } }));
+}
+
+function extractToolOutput(result: unknown): string | undefined {
+  if (!result || typeof result !== "object") return undefined;
+  if (!("content" in result)) return undefined;
+  const content = result.content;
+  if (!Array.isArray(content)) return undefined;
+  const text = content
+    .map((block) => (block && typeof block === "object" && "text" in block && typeof block.text === "string" ? block.text : ""))
+    .join("");
+  return text || undefined;
+}
+
+function extractToolDetails(result: unknown): unknown {
+  if (!result || typeof result !== "object" || !("details" in result)) return undefined;
+  return result.details;
+}
+
+function handleExtensionRequest(request: ExtensionUIRequest, set: SetState, get: () => AppState) {
+  switch (request.method) {
+    case "notify": {
+      const kind = request.notifyType === "error" ? "error" : request.notifyType === "warning" ? "warning" : "info";
+      pushToast(set, kind, request.message);
+      return;
+    }
+    case "setStatus": {
+      set((state) => {
+        const statusMarks = { ...state.statusMarks };
+        if (request.statusText) statusMarks[request.statusKey] = request.statusText;
+        else delete statusMarks[request.statusKey];
+        return { statusMarks };
+      });
+      return;
+    }
+    case "setWidget": {
+      set((state) => {
+        const widgets = { ...state.widgets };
+        if (request.widgetLines?.length) widgets[request.widgetKey] = request.widgetLines;
+        else delete widgets[request.widgetKey];
+        return { widgets };
+      });
+      return;
+    }
+    case "setTitle":
+      document.title = `${request.title} — omp-d`;
+      return;
+    case "set_editor_text":
+      get().setEditorText(request.text);
+      return;
+    case "open_url":
+      void openUrl(request.url).catch((error) => pushToast(set, "warning", `Could not open link: ${describeError(error)}`));
+      return;
+    case "cancel":
+      set((state) => ({ dialogs: state.dialogs.filter((dialog) => dialog.id !== request.targetId) }));
+      return;
+    case "select":
+    case "confirm":
+    case "input":
+    case "editor":
+    case "ask":
+      set((state) => ({ dialogs: [...state.dialogs, request] }));
+      return;
+    default:
+      return;
+  }
+}
+
+/* --------------------------------------------------------------- utilities */
+
+export function sessionTitle(session: RpcSessionState | undefined, fallback = "Untitled session"): string {
+  if (!session) return fallback;
+  const title = stripPrivateUse(session.sessionName ?? "");
+  if (title) return title;
+  return fallback;
+}
+
+export function activeTodos(phases: TodoPhase[] | undefined): { total: number; open: number; inProgress: number; completed: number } {
+  const tasks = (phases ?? []).flatMap((phase) => phase.tasks ?? []);
+  return {
+    total: tasks.length,
+    open: tasks.filter((task) => task.status === "pending").length,
+    inProgress: tasks.filter((task) => task.status === "in_progress").length,
+    completed: tasks.filter((task) => task.status === "completed").length,
+  };
+}

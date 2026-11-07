@@ -57,14 +57,14 @@ export function AppShell() {
     <TooltipProvider>
       <div className="flex h-full w-full flex-col bg-background text-foreground">
         <div className="flex min-h-0 flex-1">
-          <Sidebar onOpenSettings={() => setSettingsOpen(true)} />
+          {!modelsOpen && <Sidebar onOpenSettings={() => setSettingsOpen(true)} />}
           <main className="flex min-w-0 flex-1 flex-col">
-            <TopBar
+            {!modelsOpen && <TopBar
               onOpenModels={() => setModelsOpen(true)}
               onOpenSettings={() => setSettingsOpen(true)}
               onTogglePanel={() => setPanelOpen((value) => !value)}
               panelOpen={panelOpen}
-            />
+            />}
             {modelsOpen && <ModelPicker onClose={() => setModelsOpen(false)} />}
             <div className={modelsOpen ? "hidden" : "flex min-h-0 flex-1 flex-col"}>
               <ChatView />

@@ -68,7 +68,8 @@ export function Composer({ onOpenModels, active }: { onOpenModels: () => void; a
     const query = commandQuery.toLowerCase();
     const available: AvailableCommand[] = [
       { name: "model", description: "Choose a model for this session", source: "builtin" },
-      ...commands.filter((command) => command.name !== "model"),
+      { name: "models", description: "Browse providers, roles, and models", source: "builtin" },
+      ...commands.filter((command) => command.name !== "model" && command.name !== "models"),
     ];
     return available
       .filter((command) => command.name.toLowerCase().startsWith(query))
@@ -83,7 +84,7 @@ export function Composer({ onOpenModels, active }: { onOpenModels: () => void; a
     if (disabled || sendingRef.current) return;
     const text = draft.trim();
     if (!text) return;
-    if (text === "/model") {
+    if (text === "/model" || text === "/models") {
       setDraft("");
       onOpenModels();
       return;
@@ -104,7 +105,7 @@ export function Composer({ onOpenModels, active }: { onOpenModels: () => void; a
   }
 
   function chooseCommand(command: AvailableCommand) {
-    if (command.name === "model") {
+    if (command.name === "model" || command.name === "models") {
       setDraft("");
       onOpenModels();
       return;

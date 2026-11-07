@@ -61,6 +61,14 @@ export interface Model {
   provider: string;
   id: string;
   name?: string;
+  kind?: string;
+  /** Catalog availability; false models are browsable but cannot be selected. */
+  available?: boolean;
+  selector?: string;
+  maxTokens?: number;
+  reasoning?: boolean;
+  thinking?: string[];
+  pricingStatus?: string;
   api?: string;
   contextWindow?: number;
   maxContextWindow?: number;

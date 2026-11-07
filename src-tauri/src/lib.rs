@@ -1,4 +1,5 @@
 mod agent;
+mod catalog;
 mod rpc_frame;
 mod sessions;
 
@@ -25,6 +26,16 @@ async fn stop_agent(app: AppHandle, state: State<'_, AgentState>) -> Result<(), 
 #[tauri::command]
 async fn rpc_send(state: State<'_, AgentState>, command: serde_json::Value) -> Result<(), String> {
     agent::send(&state, command).await
+}
+
+#[tauri::command]
+async fn model_catalog(options: StartOptions) -> Result<serde_json::Value, String> {
+    catalog::models(options).await
+}
+
+#[tauri::command]
+async fn model_roles(options: StartOptions) -> Result<std::collections::BTreeMap<String, String>, String> {
+    catalog::roles(options).await
 }
 
 #[tauri::command]
@@ -58,6 +69,8 @@ pub fn run() {
             start_agent,
             stop_agent,
             rpc_send,
+            model_catalog,
+            model_roles,
             list_sessions,
             sessions_root,
             initial_folder

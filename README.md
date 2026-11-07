@@ -10,7 +10,8 @@ The app spawns a local `omp --mode rpc-ui` process and speaks its newline-delimi
 
 - Streaming chat with assistant text, thinking blocks, tool calls, ANSI-stripped terminal output, and edit diffs.
 - Session browser: resume/switch existing sessions, start new ones, rename, and reopen the active session after a restart or crash.
-- Dedicated `/model` page with provider/model search, keyboard navigation, and live-session switching, backed by `get_available_models`; thinking-level menu and context/token/cost readouts.
+- Shared `/model` and `/models` page with providers on the left, configured roles and models on the right, model-kind filters, search, keyboard navigation, and live-session switching. Project/profile-scoped cached catalogs render immediately; CLI discovery refreshes in the background. Role queries use project/profile settings; `--config` role overlays are unsupported by the CLI and produce a visible warning.
+- Unauthenticated/unavailable providers remain visible below available providers. Their full registry catalogs can be browsed, but model selection stays disabled until credentials/configuration are ready and the catalog is refreshed.
 - Composer with Enter/Shift+Enter, steering and follow-up queues, queued-message chips, Esc abort, image paste, and slash-command autocomplete.
 - Extension UI dialogs for `select`, `confirm`, `input`, `editor` and `ask`, plus `notify`, status marks and widgets.
 - Activity rail with TODOs, running tools, context usage, spend and agent notices.

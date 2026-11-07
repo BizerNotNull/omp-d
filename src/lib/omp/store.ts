@@ -3,6 +3,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { create } from "zustand";
 import { omp, RpcFailure, type OmpClientEvent } from "./client";
+import { catalogCacheKey, readCatalog, splitExtraArgs, writeCatalog } from "./model-catalog";
 import type {
   AgentMessage,
   AvailableCommand,
@@ -113,6 +114,7 @@ interface AppState {
   commands: AvailableCommand[];
   thinkingLevels: string[];
   models?: Model[];
+  modelRoles: Record<string, string>;
   modelsLoading: boolean;
   modelsError?: string;
 
@@ -166,6 +168,7 @@ let toastSeq = 0;
 let noticeSeq = 0;
 let initialized = false;
 let connectTicket = 0;
+let catalogRequest = 0;
 let refreshing = false;
 let refreshAgain = false;
 
@@ -190,11 +193,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function sleep(ms: number): Promise<void> {
-  const { promise, resolve } = Promise.withResolvers<void>();
-  window.setTimeout(resolve, ms);
-  return promise;
-}
 
 function describeError(error: unknown): string {
   if (error instanceof RpcFailure) return error.message;
@@ -217,6 +215,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   commands: [],
   thinkingLevels: [],
   modelsLoading: false,
+  modelRoles: {},
   sessions: [],
   sessionsLoading: false,
 
@@ -249,11 +248,15 @@ export const useAppStore = create<AppState>()((set, get) => ({
   connect: async (cwd, prefs) => {
     const ticket = ++connectTicket;
     const preferences = { ...get().preferences, ...prefs };
+    const cachedCatalog = readCatalog(catalogCacheKey(cwd, preferences));
     set({
       status: "starting",
       error: undefined,
       cwd,
       preferences,
+      ...cachedCatalog,
+      modelsLoading: false,
+      modelsError: undefined,
       messages: withMessageKeys([]).messages,
       messageKeys: new Set<string>(),
       pending: [],
@@ -267,10 +270,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
     });
     savePreferences(preferences);
     try {
-      const extraArgs = preferences.extraArgs
-        .split(" ")
-        .map((arg) => arg.trim())
-        .filter(Boolean);
+      const extraArgs = splitExtraArgs(preferences.extraArgs);
       const info = await omp.start({
         cwd,
         binary: preferences.binary.trim() || "omp",
@@ -280,6 +280,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
       if (ticket !== connectTicket) return;
       localStorage.setItem(LAST_CWD_KEY, cwd);
       set({ status: "ready", startInfo: info, cwd: info.cwd });
+      void get().fetchModels();
       await omp.send({ type: "set_ask_dialog", enabled: true }).catch(() => {});
       await get().refreshAll();
       await get().loadSessions();
@@ -306,14 +307,22 @@ export const useAppStore = create<AppState>()((set, get) => ({
   },
 
   disconnect: async () => {
+    ++connectTicket;
     await omp.stop();
-    set({ status: "stopped", busy: false, queue: { steering: [], followUp: [] } });
+    set({ status: "stopped", busy: false, queue: { steering: [], followUp: [] }, modelsLoading: false });
   },
 
   updatePreferences: (partial) => {
+    const previous = get().preferences;
     const preferences = { ...get().preferences, ...partial };
     savePreferences(preferences);
     set({ preferences });
+    const cwd = get().cwd;
+    if (cwd && catalogCacheKey(cwd, previous) !== catalogCacheKey(cwd, preferences)) {
+      ++catalogRequest;
+      set({ ...readCatalog(catalogCacheKey(cwd, preferences)), modelsLoading: false, modelsError: undefined });
+      void get().fetchModels();
+    }
   },
 
   openProjectDialog: async () => {
@@ -538,22 +547,36 @@ export const useAppStore = create<AppState>()((set, get) => ({
   },
 
   fetchModels: async () => {
-    if (get().modelsLoading) return;
+    const { cwd, preferences, status, modelsLoading } = get();
+    if (!cwd || modelsLoading || (status !== "ready" && status !== "starting")) return;
+    const ticket = connectTicket;
+    const key = catalogCacheKey(cwd, preferences);
+    const options = { cwd, binary: preferences.binary.trim() || "omp", extraArgs: splitExtraArgs(preferences.extraArgs) };
+    const request = ++catalogRequest;
+    const current = () => ticket === connectTicket && request === catalogRequest && (get().status === "starting" || get().status === "ready");
+    const persist = () => {
+      const { models, modelRoles } = get();
+      writeCatalog(key, { models, modelRoles });
+    };
     set({ modelsLoading: true, modelsError: undefined });
-    const attempts = 3;
-    for (let attempt = 1; attempt <= attempts; attempt++) {
-      try {
-        const res = await omp.send<{ models: Model[] }>({ type: "get_available_models" }, { timeoutMs: 120_000 });
-        set({ models: res.data?.models ?? [], modelsLoading: false });
-        return;
-      } catch (error) {
-        if (attempt === attempts) {
-          set({ modelsLoading: false, modelsError: describeError(error) });
-          return;
-        }
-        await sleep(1500);
-      }
+    const results = await Promise.allSettled([
+      invoke<Model[]>("model_catalog", { options }).then((models) => {
+        if (!current()) return;
+        set({ models });
+        persist();
+      }),
+      invoke<Record<string, string>>("model_roles", { options }).then((modelRoles) => {
+        if (!current()) return;
+        set({ modelRoles });
+        persist();
+      }),
+    ]);
+    if (!current()) return;
+    const errors = results.flatMap((result) => result.status === "rejected" ? [describeError(result.reason)] : []);
+    if (options.extraArgs.some(arg => arg === "--config" || arg.startsWith("--config="))) {
+      errors.push("Model roles reflect project/profile settings only; the CLI does not support config overlays for role queries.");
     }
+    set({ modelsLoading: false, modelsError: errors.length ? errors.join("; ") : undefined });
   },
 
   setModel: async (provider, id) => {
@@ -745,7 +768,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
         set({ status: "ready" });
         return;
       case "disconnected":
-        set({ status: "stopped", busy: false, error: event.reason });
+        ++catalogRequest;
+        set({ status: "stopped", busy: false, error: event.reason, modelsLoading: false });
         return;
       case "protocol":
         appendDiagnostic(set, `${event.event.kind}: ${event.event.message}`);
@@ -756,7 +780,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
         return;
       case "process":
         if (event.event.kind === "error") {
-          set({ status: "error", error: event.event.message, busy: false });
+          ++catalogRequest;
+          set({ status: "error", error: event.event.message, busy: false, modelsLoading: false });
         }
         return;
     }

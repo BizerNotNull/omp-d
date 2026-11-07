@@ -10,7 +10,7 @@ The app spawns a local `omp --mode rpc-ui` process and speaks its newline-delimi
 
 - Streaming chat with assistant text, thinking blocks, tool calls, ANSI-stripped terminal output, and edit diffs.
 - Session browser: resume/switch existing sessions, start new ones, rename, and reopen the active session after a restart or crash.
-- Model picker backed by `get_available_models`, thinking-level menu, context/token/cost readouts.
+- Dedicated `/model` page with provider/model search, keyboard navigation, and live-session switching, backed by `get_available_models`; thinking-level menu and context/token/cost readouts.
 - Composer with Enter/Shift+Enter, steering and follow-up queues, queued-message chips, Esc abort, image paste, and slash-command autocomplete.
 - Extension UI dialogs for `select`, `confirm`, `input`, `editor` and `ask`, plus `notify`, status marks and widgets.
 - Activity rail with TODOs, running tools, context usage, spend and agent notices.

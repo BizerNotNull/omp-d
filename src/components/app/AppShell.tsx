@@ -65,15 +65,17 @@ export function AppShell() {
               onTogglePanel={() => setPanelOpen((value) => !value)}
               panelOpen={panelOpen}
             />
-            <ChatView />
-            <Composer />
+            {modelsOpen && <ModelPicker onClose={() => setModelsOpen(false)} />}
+            <div className={modelsOpen ? "hidden" : "flex min-h-0 flex-1 flex-col"}>
+              <ChatView />
+              <Composer active={!modelsOpen} onOpenModels={() => setModelsOpen(true)} />
+            </div>
           </main>
-          {panelOpen && <RightPanel />}
+          {panelOpen && !modelsOpen && <RightPanel />}
         </div>
         <StatusBar />
         <ExtensionDialogs />
         <Toasts />
-        <ModelPicker open={modelsOpen} onOpenChange={setModelsOpen} />
         <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
       </div>
     </TooltipProvider>

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Dedicated `/model` page with provider groups, model search, keyboard selection, and Escape/back navigation
+
+### Changed
+- `/model` and the toolbar model button now open the model page instead of a dialog, and the chat draft is preserved on return
+
+### Fixed
+- Model switching keeps the model page open on failure so users can retry
 ## 0.1.0 — 2026-11-06
 
 Initial desktop client for Oh My Pi.

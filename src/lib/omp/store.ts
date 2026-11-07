@@ -150,7 +150,7 @@ interface AppState {
   renameSession: (name: string) => Promise<void>;
 
   fetchModels: () => Promise<void>;
-  setModel: (provider: string, id: string) => Promise<void>;
+  setModel: (provider: string, id: string) => Promise<boolean>;
   setThinkingLevel: (level: string) => Promise<void>;
 
   answerDialog: (dialogId: string, response: Omit<ExtensionUIResponse, "type" | "id">) => Promise<void>;
@@ -561,8 +561,10 @@ export const useAppStore = create<AppState>()((set, get) => ({
       const res = await omp.send<Model>({ type: "set_model", provider, modelId: id });
       await get().refreshState();
       pushToast(set, "success", `Model set to ${modelLabel(res.data)}.`);
+      return true;
     } catch (error) {
       pushToast(set, "error", describeError(error));
+      return false;
     }
   },
 

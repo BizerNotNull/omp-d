@@ -24,7 +24,7 @@ function readImage(file: File): Promise<ImageContent | undefined> {
   });
 }
 
-export function Composer() {
+export function Composer({ onOpenModels, active }: { onOpenModels: () => void; active: boolean }) {
   const [draft, setDraft] = useState("");
   const [images, setImages] = useState<ImageContent[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -45,12 +45,16 @@ export function Composer() {
   const restart = useAppStore((state) => state.restart);
 
   useEffect(() => {
+    if (active && status === "ready") textareaRef.current?.focus();
+  }, [active, status]);
+
+  useEffect(() => {
     if (editorToken !== lastEditorToken.current && editorText) {
       lastEditorToken.current = editorToken;
       setDraft(editorText);
-      textareaRef.current?.focus();
+      if (active) textareaRef.current?.focus();
     }
-  }, [editorText, editorToken]);
+  }, [editorText, editorToken, active]);
 
   const commandQuery = useMemo(() => {
     if (!draft.startsWith("/")) return undefined;
@@ -62,7 +66,11 @@ export function Composer() {
   const suggestions = useMemo(() => {
     if (commandQuery === undefined) return [];
     const query = commandQuery.toLowerCase();
-    return commands
+    const available: AvailableCommand[] = [
+      { name: "model", description: "Choose a model for this session", source: "builtin" },
+      ...commands.filter((command) => command.name !== "model"),
+    ];
+    return available
       .filter((command) => command.name.toLowerCase().startsWith(query))
       .slice(0, 8);
   }, [commands, commandQuery]);
@@ -75,6 +83,11 @@ export function Composer() {
     if (disabled || sendingRef.current) return;
     const text = draft.trim();
     if (!text) return;
+    if (text === "/model") {
+      setDraft("");
+      onOpenModels();
+      return;
+    }
     sendingRef.current = true;
     setSubmitting(true);
     try {
@@ -91,6 +104,11 @@ export function Composer() {
   }
 
   function chooseCommand(command: AvailableCommand) {
+    if (command.name === "model") {
+      setDraft("");
+      onOpenModels();
+      return;
+    }
     setDraft(`/${command.name} `);
     textareaRef.current?.focus();
   }

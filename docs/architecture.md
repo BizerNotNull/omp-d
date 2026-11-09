@@ -127,6 +127,27 @@ prompt (matching the interactive picker).
   `sessionFile` with `switch_session`, so the conversation survives settings
   changes, crashes and manual restarts.
 
+## Composer status
+
+The row below the input shows the current goal status/objective, thinking level,
+enabled fast/slow modes, context usage, and extension status marks. The mode slot
+shows `/goal` when a goal exists; otherwise `/prewalk` is explicitly marked
+unavailable via RPC. The installed runtime does not expose prewalk state through
+`get_state`, so the client never infers activation from composer text or notices.
+
+`git_status(cwd)` runs read-only Git commands in Rust with a five-second timeout
+and no Windows console window. The active composer refreshes on mount, focus,
+turn activity changes, and every ten seconds. Requests are coalesced and results
+from replaced connections/workspaces are ignored.
+
+File counts cover the whole repository: staged and unstaged counts can overlap,
+conflicts are separate, and untracked files are counted individually. Line totals
+compare tracked working files against HEAD (the empty tree for unborn branches);
+binary contents and untracked files are excluded. Worktrees and detached HEAD
+are supported. Non-repositories and Git failures have distinct labels; failed
+refreshes clear old values.
+
+
 ## Failure handling
 
 - Closing stdin lets omp drain accepted commands and exit cleanly. Rust waits 5 s,

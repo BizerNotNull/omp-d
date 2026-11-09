@@ -213,6 +213,17 @@ export interface RpcSessionState {
   dumpTools?: Array<{ name: string; description: string; parameters: unknown }>;
 }
 
+/** Read-only workspace Git summary from the native supervisor. */
+export interface GitStatus {
+  branch: string;
+  staged: number;
+  unstaged: number;
+  untracked: number;
+  conflicted: number;
+  additions: number;
+  deletions: number;
+}
+
 export interface SessionStats {
   sessionFile?: string;
   sessionId: string;

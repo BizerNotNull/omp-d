@@ -2,9 +2,8 @@
 
 ## Unreleased
 
-### Added
-- Native Oh My Pi settings editor with live catalog discovery, category/search filters, typed scalar and JSON controls, credential masking, global save/reset, effective-value summaries, and explicit agent restart
-- Local `/settings` command opens the editor without sending a chat prompt; desktop launch preferences and runtime diagnostics remain in their own tab
+### Fixed
+- Keep `bun tauri dev` open during `/wt <branch>` by disabling native watcher auto-restarts; frontend hot reload remains enabled. Use `bunx tauri dev` to opt into native watching
 ## 0.1.0 — 2026-11-06
 
 Initial desktop client for Oh My Pi.

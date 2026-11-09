@@ -129,11 +129,13 @@ prompt (matching the interactive picker).
 
 ## Composer status
 
-The row below the input shows the current goal status/objective, thinking level,
-enabled fast/slow modes, context usage, and extension status marks. The mode slot
-shows `/goal` when a goal exists; otherwise `/prewalk` is explicitly marked
-unavailable via RPC. The installed runtime does not expose prewalk state through
-`get_state`, so the client never infers activation from composer text or notices.
+The row below the input shows the current goal status, thinking level, enabled
+fast/slow modes, context usage, and extension status marks. The mode slot
+appears only while a goal exists, as `/goal` plus its status; the objective
+itself stays in the Activity rail. `/prewalk` is not rendered: the installed
+runtime does not expose prewalk state through `get_state`, so the client never
+infers activation from composer text or notices. TODO.md tracks querying that
+state over RPC.
 
 `git_status(cwd)` runs read-only Git commands in Rust with a five-second timeout
 and no Windows console window. The active composer refreshes on mount, focus,

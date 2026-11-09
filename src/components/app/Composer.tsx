@@ -58,9 +58,10 @@ export function Composer({ onOpenModels, active }: { onOpenModels: () => void; a
 
   const commandQuery = useMemo(() => {
     if (!draft.startsWith("/")) return undefined;
-    const token = draft.slice(1).split(/\s/)[0] ?? "";
-    if (draft.slice(1).includes(" ")) return undefined;
-    return token;
+    const value = draft.slice(1);
+    if (/^goal\s+\S*$/.test(value)) return value.replace(/\s+/, " ");
+    if (/\s/.test(value)) return undefined;
+    return value;
   }, [draft]);
 
   const suggestions = useMemo(() => {
@@ -69,10 +70,18 @@ export function Composer({ onOpenModels, active }: { onOpenModels: () => void; a
     const available: AvailableCommand[] = [
       { name: "model", description: "Choose a model for this session", source: "builtin" },
       { name: "models", description: "Browse providers, roles, and models", source: "builtin" },
-      ...commands.filter((command) => command.name !== "model" && command.name !== "models"),
+      { name: "goal", description: "Show the current goal or set an objective", source: "builtin" },
+      ...[
+        ["set", "Start a goal: /goal set <objective>"],
+        ["show", "Show current goal details"],
+        ["pause", "Pause the current goal"],
+        ["resume", "Resume a paused goal"],
+        ["drop", "Drop the current goal"],
+      ].map(([name, description]) => ({ name: `goal ${name}`, description, source: "builtin" })),
+      ...commands.filter((command) => !["model", "models", "goal", "guided-goal"].includes(command.name)),
     ];
     return available
-      .filter((command) => command.name.toLowerCase().startsWith(query))
+      .filter((command) => command.name.toLowerCase().startsWith(query) && (query.includes(" ") || !command.name.includes(" ")))
       .slice(0, 8);
   }, [commands, commandQuery]);
 

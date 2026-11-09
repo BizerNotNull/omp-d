@@ -40,6 +40,7 @@ export function RightPanel() {
   const statusMarks = useAppStore((state) => state.statusMarks);
   const todos = activeTodos(session?.todoPhases);
   const usage = session?.contextUsage;
+  const goal = session?.goal?.goal;
   const running = Object.values(toolRuns).filter((run) => run.status === "running");
 
   return (
@@ -52,12 +53,16 @@ export function RightPanel() {
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-4 p-3">
-          {session?.goal?.objective && (
+          {goal && (
             <section className="rounded-lg border border-border/70 bg-card/60 p-2.5">
               <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                 <Target className="size-3" /> Goal
               </div>
-              <p className="text-[11px] leading-relaxed text-foreground/80">{session.goal.objective}</p>
+              <p className="text-[11px] leading-relaxed text-foreground/80">{goal.objective}</p>
+              <div className="mt-2 space-y-1 text-[10px] text-muted-foreground">
+                <p className="capitalize">{goal.status}</p>
+                <p>{formatTokens(goal.tokensUsed)}{goal.tokenBudget !== undefined ? ` / ${formatTokens(goal.tokenBudget)}` : ""} tokens · {Math.floor(goal.timeUsedSeconds)}s</p>
+              </div>
             </section>
           )}
 

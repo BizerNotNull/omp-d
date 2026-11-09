@@ -13,6 +13,7 @@ The app spawns a local `omp --mode rpc-ui` process and speaks its newline-delimi
 - Shared `/model` and `/models` page with providers on the left, configured roles and models on the right, model-kind filters, search, keyboard navigation, and live-session switching. Project/profile-scoped cached catalogs render immediately; CLI discovery refreshes in the background. Role queries use project/profile settings; `--config` role overlays are unsupported by the CLI and produce a visible warning.
 - Unauthenticated/unavailable providers remain visible below available providers. Their full registry catalogs can be browsed, but model selection stays disabled until credentials/configuration are ready and the catalog is refreshed.
 - Composer with Enter/Shift+Enter, steering and follow-up queues, queued-message chips, Esc abort, image paste, and slash-command autocomplete.
+- Goal commands: `/goal <objective>` or `/goal set <objective>` starts a goal; `/goal` and `/goal show` display it; `/goal pause`, `/goal resume`, and `/goal drop` manage its lifecycle. The Activity rail shows its status and usage. Budget editing and `/guided-goal` require runtime RPC operations that are not currently available.
 - Extension UI dialogs for `select`, `confirm`, `input`, `editor` and `ask`, plus `notify`, status marks and widgets.
 - Activity rail with TODOs, running tools, context usage, spend and agent notices.
 - Process supervision: v1/v2 RPC framing, chunk reassembly, crash detection, clean shutdown, and restart that preserves the current session.

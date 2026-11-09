@@ -10,6 +10,9 @@ import type { Model } from "@/lib/omp/types";
 const ROW_HEIGHT = 64;
 const OVERSCAN = 5;
 const modelKey = (model: Model) => `${model.provider}/${model.id}`;
+// Canonical order of built-in model roles, as defined by omp. Custom roles follow.
+const ROLE_ORDER = ["default", "smol", "slow", "vision", "plan", "commit", "tiny", "memory", "task", "advisor", "widget", "image", "web", "speech", "dictation", "judge"];
+const roleRank = (role: string) => { const index = ROLE_ORDER.indexOf(role); return index === -1 ? ROLE_ORDER.length : index; };
 
 export function ModelPicker({ onClose, onLoginRequest, active = true }: { onClose: () => void; onLoginRequest: (provider: string) => void; active?: boolean }) {
   const models = useAppStore((state) => state.models);
@@ -69,7 +72,7 @@ export function ModelPicker({ onClose, onLoginRequest, active = true }: { onClos
   const roleEntries = useMemo(() => Object.entries(roles).filter(([role, selector]) => {
     const search = query.trim().toLowerCase();
     return (!provider || selector.startsWith(`${provider}/`)) && (!search || `${role} ${selector}`.toLowerCase().includes(search));
-  }), [roles, provider, query]);
+  }).sort(([left], [right]) => roleRank(left) - roleRank(right) || left.localeCompare(right)), [roles, provider, query]);
   const selectedIndex = Math.min(highlighted, Math.max(0, filtered.length - 1));
   const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
   const end = Math.min(filtered.length, Math.ceil((scrollTop + height) / ROW_HEIGHT) + OVERSCAN);

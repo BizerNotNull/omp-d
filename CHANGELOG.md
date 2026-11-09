@@ -3,7 +3,7 @@
 ## Unreleased
 
 ### Changed
-- Composer status shows `/goal` only when a goal exists, with its status and the objective left to the Activity rail, and hides the `/prewalk` indicator since the installed RPC API exposes no prewalk state
+- Model picker roles follow omp's canonical role order (default, smol, slow, vision, plan, commit, tiny, memory, task, advisor, widget, image, web, speech, dictation, judge) instead of alphabetical order; custom roles follow built-ins
 ## 0.1.0 — 2026-11-06
 
 Initial desktop client for Oh My Pi.

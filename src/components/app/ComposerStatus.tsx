@@ -34,17 +34,13 @@ export function ComposerStatus({ active }: { active: boolean }) {
 
   return (
     <div aria-label="Session and Git status" className="mt-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[10px] text-muted-foreground">
-      <span
-        className="inline-flex min-w-0 max-w-full items-center gap-1.5"
-        title={goal ? goal.objective : "The installed omp RPC API does not expose prewalk state."}
-      >
-        <Target aria-hidden="true" className="size-3 shrink-0" />
-        {goal ? (
-          <><span className="shrink-0 font-mono text-foreground/80">/goal</span><span>{session?.goal?.mode === "exiting" ? "exiting" : goal.status}</span><span className="truncate">{goal.objective}</span></>
-        ) : (
-          <><span className="font-mono">/prewalk</span><span className="text-muted-foreground/60">unavailable via RPC</span></>
-        )}
-      </span>
+      {goal && (
+        <span className="inline-flex min-w-0 max-w-full items-center gap-1.5">
+          <Target aria-hidden="true" className="size-3 shrink-0" />
+          <span className="shrink-0 font-mono text-foreground/80">/goal</span>
+          <span className="truncate">{session?.goal?.mode === "exiting" ? "exiting" : goal.status}</span>
+        </span>
+      )}
       {session?.thinkingLevel && <span title="Thinking level">{session.thinkingLevel}</span>}
       {session?.fastModeEnabled && <span>fast{session.fastModeActive === false ? " (inactive)" : ""}</span>}
       {session?.slowModeEnabled && <span>slow</span>}

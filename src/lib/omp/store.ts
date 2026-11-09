@@ -435,8 +435,59 @@ export const useAppStore = create<AppState>()((set, get) => ({
     const trimmed = text.trim();
     if (!trimmed) return false;
     const shouldTitle = !get().session?.sessionName && (get().session?.messageCount ?? 0) === 0 && !trimmed.startsWith("/");
-    set({ busy: true });
+    // Goal lifecycle commands must not mark an idle session as streaming.
+    if (/^\/(?:goal|guided-goal)(?:\s|$)/.test(trimmed)) {
+      try {
+        if (images?.length) throw new Error("Goal commands do not accept image attachments.");
+        if (trimmed.startsWith("/guided-goal")) {
+          throw new Error("Guided goals are not supported by the installed omp RPC API.");
+        }
+        const args = trimmed.slice(5).trim();
+        const [subcommand = "", ...words] = args.split(/\s+/);
+        const rest = words.join(" ");
+        let op: "get" | "create" | "pause" | "resume" | "drop";
+        let objective: string | undefined;
+        switch (subcommand) {
+          case "":
+          case "show":
+            op = "get";
+            break;
+          case "set":
+            if (!rest) throw new Error("Usage: /goal set <objective>");
+            op = "create";
+            objective = args.slice(3).trim();
+            break;
+          case "pause":
+          case "resume":
+          case "drop":
+            if (rest) throw new Error(`Usage: /goal ${subcommand}`);
+            op = subcommand;
+            break;
+          case "budget":
+            throw new Error("Budget editing is not supported by the installed omp RPC API.");
+          default:
+            op = "create";
+            objective = args;
+        }
+        if (op === "get" && rest) throw new Error("Usage: /goal show");
+        const response = await omp.send<{ state: GoalModeState | null }>({ type: "goal", op, ...(objective ? { objective } : {}) });
+        if (response.data) {
+          const goalState = response.data.state;
+          set((state) => state.session ? { session: { ...state.session, goal: goalState } } : {});
+          const goal = goalState?.goal;
+          pushNotice(set, "info", goal
+            ? `Goal ${goal.status}: ${goal.objective}`
+            : "No current goal. Use /goal set <objective> to start one.");
+        }
+        await get().refreshState();
+        return true;
+      } catch (error) {
+        pushToast(set, "error", describeError(error));
+        return false;
+      }
+    }
     try {
+      set({ busy: true });
       const command: RpcCommand = { type: "prompt", message: trimmed };
       if (images?.length) command.images = images;
       if (behavior) command.streamingBehavior = behavior;
@@ -723,8 +774,14 @@ export const useAppStore = create<AppState>()((set, get) => ({
         void get().refreshState();
         return;
       case "goal_updated": {
-        const goal = (frame.goal as GoalModeState | null) ?? null;
-        set((state) => (state.session ? { session: { ...state.session, goal } } : {}));
+        const goalState = frame.state as GoalModeState | undefined;
+        if (!goalState && frame.goal) {
+          void get().refreshState();
+          return;
+        }
+        set((state) => state.session
+          ? { session: { ...state.session, goal: goalState ?? null } }
+          : {});
         return;
       }
       case "available_commands_update": {

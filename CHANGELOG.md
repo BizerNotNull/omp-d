@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+### Added
+- Goal lifecycle commands and subcommand autocomplete, with live goal status, token usage, and elapsed time in the Activity rail
 ### Fixed
 - Clear recent sessions immediately when switching project folders, display a loading message, and ignore superseded session-list responses
 ## 0.1.0 — 2026-11-06

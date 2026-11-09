@@ -153,12 +153,22 @@ export interface ContextUsage {
   percent: number;
 }
 
-export interface GoalModeState {
-  objective?: string;
-  status?: string;
-  tokensUsed?: number;
-  timeUsedSeconds?: number;
+export interface Goal {
+  id: string;
+  objective: string;
+  status: string;
+  tokensUsed: number;
+  timeUsedSeconds: number;
   tokenBudget?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface GoalModeState {
+  enabled: boolean;
+  mode: "active" | "exiting";
+  reason?: "completed";
+  goal: Goal;
 }
 
 export interface QueuedMessages {

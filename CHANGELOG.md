@@ -4,6 +4,7 @@
 
 ### Added
 - Goal lifecycle commands and subcommand autocomplete, with live goal status, token usage, and elapsed time in the Activity rail
+- Composer status row with a single mode indicator, thinking/context state, extension statuses, and live Git branch, file counts, and tracked line changes; `/prewalk` reports that the installed RPC API exposes no prewalk state
 ### Fixed
 - Clear recent sessions immediately when switching project folders, display a loading message, and ignore superseded session-list responses
 ## 0.1.0 — 2026-11-06

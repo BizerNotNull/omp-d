@@ -10,6 +10,7 @@ import type {
   ExtensionUIRequest,
   ExtensionUIResponse,
   GoalModeState,
+  GitStatus,
   ImageContent,
   Model,
   PromptResultFrame,
@@ -104,6 +105,8 @@ interface AppState {
 
   session?: RpcSessionState;
   stats?: SessionStats;
+  gitStatus?: GitStatus | null;
+  gitStatusError?: string;
   messages: AgentMessage[];
   messageKeys: Set<string>;
   pending: PendingMessage[];
@@ -139,6 +142,7 @@ interface AppState {
 
   refreshAll: () => Promise<void>;
   refreshState: () => Promise<void>;
+  refreshGitStatus: () => Promise<void>;
   refreshMessages: () => Promise<void>;
   loadSessions: () => Promise<void>;
 
@@ -172,6 +176,7 @@ let catalogRequest = 0;
 let sessionsRequest = 0;
 let refreshing = false;
 let refreshAgain = false;
+let gitRefreshKey: string | undefined;
 
 function messageKey(message: AgentMessage): string {
   const timestamp = typeof message.timestamp === "number" ? message.timestamp : 0;
@@ -271,6 +276,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
       widgets: {},
       session: undefined,
       stats: undefined,
+      gitStatus: undefined,
+      gitStatusError: undefined,
     });
     savePreferences(preferences);
     try {
@@ -383,6 +390,27 @@ export const useAppStore = create<AppState>()((set, get) => ({
         refreshAgain = false;
         void get().refreshAll();
       }
+    }
+  },
+
+  refreshGitStatus: async () => {
+    const { cwd, status } = get();
+    if (!cwd || status !== "ready") return;
+    const ticket = connectTicket;
+    const key = `${ticket}:${cwd}`;
+    if (gitRefreshKey === key) return;
+    gitRefreshKey = key;
+    try {
+      const gitStatus = await invoke<GitStatus | null>("git_status", { cwd });
+      if (ticket === connectTicket && get().cwd === cwd && get().status === "ready") {
+        set({ gitStatus, gitStatusError: undefined });
+      }
+    } catch (error) {
+      if (ticket === connectTicket && get().cwd === cwd && get().status === "ready") {
+        set({ gitStatus: undefined, gitStatusError: describeError(error) });
+      }
+    } finally {
+      if (gitRefreshKey === key) gitRefreshKey = undefined;
     }
   },
 

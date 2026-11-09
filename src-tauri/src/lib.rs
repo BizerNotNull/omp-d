@@ -1,6 +1,7 @@
 mod agent;
 mod auth;
 mod catalog;
+mod git_status;
 mod rpc_frame;
 mod sessions;
 
@@ -77,6 +78,11 @@ fn sessions_root() -> String {
     sessions::sessions_root().to_string_lossy().to_string()
 }
 
+#[tauri::command]
+async fn git_status(cwd: String) -> Result<Option<git_status::GitStatus>, String> {
+    git_status::status(cwd).await
+}
+
 /// Optional folder to open when no previous workspace is stored.
 #[tauri::command]
 fn initial_folder() -> Option<String> {
@@ -103,6 +109,7 @@ pub fn run() {
             auth_stop,
             list_sessions,
             sessions_root,
+            git_status,
             initial_folder
         ])
         .build(tauri::generate_context!())

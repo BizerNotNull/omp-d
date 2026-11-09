@@ -5,6 +5,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/omp/store";
 import type { AvailableCommand, ImageContent } from "@/lib/omp/types";
+import { ComposerStatus } from "./ComposerStatus";
 
 function readImage(file: File): Promise<ImageContent | undefined> {
   return new Promise((resolve) => {
@@ -313,6 +314,7 @@ export function Composer({ onOpenModels, active }: { onOpenModels: () => void; a
             </div>
           </div>
         </div>
+        <ComposerStatus active={active} />
 
         <div className="mt-1.5 flex items-center gap-2 px-1 text-[10px] text-muted-foreground/60">
           <CornerDownLeft className="size-2.5" />

@@ -2,9 +2,8 @@
 
 ## Unreleased
 
-### Added
-- Double-click an unavailable provider to open its OAuth login page with registered methods, prompts, browser authorization and cancellation
-- Login runs in a dedicated attempt-scoped omp worker; success refreshes provider discovery and the model catalog
+### Fixed
+- Clear recent sessions immediately when switching project folders, display a loading message, and ignore superseded session-list responses
 ## 0.1.0 — 2026-11-06
 
 Initial desktop client for Oh My Pi.

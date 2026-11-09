@@ -11,7 +11,7 @@ const ROW_HEIGHT = 64;
 const OVERSCAN = 5;
 const modelKey = (model: Model) => `${model.provider}/${model.id}`;
 
-export function ModelPicker({ onClose }: { onClose: () => void }) {
+export function ModelPicker({ onClose, onLoginRequest, active = true }: { onClose: () => void; onLoginRequest: (provider: string) => void; active?: boolean }) {
   const models = useAppStore((state) => state.models);
   const roles = useAppStore((state) => state.modelRoles);
   const loading = useAppStore((state) => state.modelsLoading);
@@ -30,6 +30,11 @@ export function ModelPicker({ onClose }: { onClose: () => void }) {
   const [height, setHeight] = useState(400);
   const selectionPending = useRef(false);
   const listRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (active) searchRef.current?.focus();
+  }, [active]);
 
   useEffect(() => {
     if (useAppStore.getState().models === undefined && status === "ready") void fetchModels();
@@ -133,7 +138,7 @@ export function ModelPicker({ onClose }: { onClose: () => void }) {
             const firstUnavailable = unavailable && (index === 0 || catalog.providers[index - 1][1].available > 0);
             return <div key={id}>
               {firstUnavailable && <div className="my-2 border-t px-2 pt-2 text-[10px] text-muted-foreground">Unavailable</div>}
-              <button type="button" title={`${id} · ${unavailable ? "Authentication or configuration required" : "Available"}`} aria-pressed={provider === id} className={cn(navClass, provider === id ? "bg-primary/10 text-primary" : "hover:bg-muted/60")} onClick={() => { setProvider(id); setView("models"); }}>
+              <button type="button" title={`${id} · ${unavailable ? "Authentication or configuration required. Double-click to log in." : "Available"}`} aria-pressed={provider === id} className={cn(navClass, provider === id ? "bg-primary/10 text-primary" : "hover:bg-muted/60")} onClick={() => { setProvider(id); setView("models"); }} onDoubleClick={() => { if (unavailable) onLoginRequest(id); }}>
                 <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", unavailable ? "border border-muted-foreground" : "bg-success")} />
                 <span className="min-w-0 flex-1 truncate font-mono">{id}</span><span className="text-muted-foreground">{unavailable ? counts.total : counts.available}</span>
               </button>
@@ -152,7 +157,7 @@ export function ModelPicker({ onClose }: { onClose: () => void }) {
           </div>}
           <div className="relative">
             <Search className="absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input autoFocus aria-label={view === "roles" ? "Filter roles" : "Filter models"} aria-controls="model-options" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
+            <Input ref={searchRef} autoFocus aria-label={view === "roles" ? "Filter roles" : "Filter models"} aria-controls="model-options" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
               if (view !== "models") return;
               if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); navigate(event.key === "ArrowDown" ? 1 : -1); }
               else if (event.key === "Enter") { event.preventDefault(); const model = filtered[selectedIndex]; if (model) void choose(model); }
@@ -160,7 +165,7 @@ export function ModelPicker({ onClose }: { onClose: () => void }) {
           </div>
           {error && <div role="alert" className="text-xs text-destructive">{error}</div>}
           {status !== "ready" && <p role="status" className="text-xs text-muted-foreground">Connect to the agent to change models.</p>}
-          {view === "models" && provider && selectedProvider?.available === 0 && <p role="status" className="text-xs text-muted-foreground">This provider is unavailable. Authenticate with <code>omp login</code> or configure its credentials, then refresh. Catalog models below cannot be selected yet.</p>}
+          {view === "models" && provider && selectedProvider?.available === 0 && <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><p role="status">This provider needs authentication or configuration. Catalog models below cannot be selected yet.</p><Button variant="outline" size="sm" disabled={selecting} onClick={() => onLoginRequest(provider)}>Sign in to {provider}</Button></div>}
           <div id="model-options" ref={listRef} aria-label={view === "roles" ? "Configured roles" : "Available models"} className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-md border" onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}>
             {view === "roles" ? <div className="divide-y">{roleEntries.map(([role, selector]) => {
               const modelSelector = selector.replace(/:(off|minimal|low|medium|high|xhigh|max|auto)$/, "");

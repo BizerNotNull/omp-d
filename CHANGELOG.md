@@ -2,10 +2,9 @@
 
 ## Unreleased
 
-### Changed
-- `/model` and `/models` share a provider sidebar, role assignments, model-kind filters, and a virtualized model list
-- Model catalogs and roles load from a scoped cache immediately and refresh independently in the background without waiting for RPC provider discovery
-- Unauthenticated providers appear in the sidebar with browsable catalog models, availability indicators, and disabled selection until configured
+### Added
+- Double-click an unavailable provider to open its OAuth login page with registered methods, prompts, browser authorization and cancellation
+- Login runs in a dedicated attempt-scoped omp worker; success refreshes provider discovery and the model catalog
 ## 0.1.0 — 2026-11-06
 
 Initial desktop client for Oh My Pi.

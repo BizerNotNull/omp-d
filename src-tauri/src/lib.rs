@@ -1,4 +1,5 @@
 mod agent;
+mod auth;
 mod catalog;
 mod rpc_frame;
 mod sessions;
@@ -39,6 +40,31 @@ async fn model_roles(options: StartOptions) -> Result<std::collections::BTreeMap
 }
 
 #[tauri::command]
+async fn auth_start(
+    app: AppHandle,
+    state: State<'_, auth::AuthState>,
+    options: StartOptions,
+    attempt: String,
+    provider: String,
+) -> Result<(), String> {
+    auth::start(app, &state, options, attempt, provider).await
+}
+
+#[tauri::command]
+async fn auth_send(
+    state: State<'_, auth::AuthState>,
+    attempt: String,
+    command: auth::AuthCommand,
+) -> Result<(), String> {
+    auth::send(&state, &attempt, command).await
+}
+
+#[tauri::command]
+async fn auth_stop(state: State<'_, auth::AuthState>, attempt: String) -> Result<(), String> {
+    auth::stop(&state, Some(&attempt)).await
+}
+
+#[tauri::command]
 fn list_sessions(
     cwd: String,
     limit: Option<usize>,
@@ -65,12 +91,16 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(AgentState::default())
+        .manage(auth::AuthState::default())
         .invoke_handler(tauri::generate_handler![
             start_agent,
             stop_agent,
             rpc_send,
             model_catalog,
             model_roles,
+            auth_start,
+            auth_send,
+            auth_stop,
             list_sessions,
             sessions_root,
             initial_folder
@@ -83,6 +113,8 @@ pub fn run() {
             let state = app_handle.state::<AgentState>();
             tauri::async_runtime::block_on(async {
                 let _ = agent::stop(state.inner()).await;
+                let auth_state = app_handle.state::<auth::AuthState>();
+                let _ = auth::stop(auth_state.inner(), None).await;
             });
         }
     });

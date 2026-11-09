@@ -10,7 +10,9 @@ import { Welcome } from "./Welcome";
 import { Toasts } from "./Toasts";
 import { ExtensionDialogs } from "./ExtensionDialogs";
 import { ModelPicker } from "./ModelPicker";
+import { ProviderLogin } from "./ProviderLogin";
 import { SettingsDialog } from "./SettingsDialog";
+import { splitExtraArgs } from "@/lib/omp/model-catalog";
 import { useAppStore } from "@/lib/omp/store";
 
 export function AppShell() {
@@ -19,6 +21,8 @@ export function AppShell() {
   const theme = useAppStore((state) => state.preferences.theme);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [modelsOpen, setModelsOpen] = useState(false);
+  const [loginProvider, setLoginProvider] = useState<string>();
+  const preferences = useAppStore((state) => state.preferences);
   const [panelOpen, setPanelOpen] = useState(true);
 
   useEffect(() => {
@@ -65,7 +69,8 @@ export function AppShell() {
               onTogglePanel={() => setPanelOpen((value) => !value)}
               panelOpen={panelOpen}
             />}
-            {modelsOpen && <ModelPicker onClose={() => setModelsOpen(false)} />}
+            {modelsOpen && <div className={loginProvider ? "hidden" : "flex min-h-0 flex-1 flex-col"}><ModelPicker active={!loginProvider} onClose={() => setModelsOpen(false)} onLoginRequest={setLoginProvider} /></div>}
+            {modelsOpen && loginProvider && <ProviderLogin key={`${cwd}:${loginProvider}`} provider={loginProvider} options={{ cwd, binary: preferences.binary.trim() || "omp", extraArgs: splitExtraArgs(preferences.extraArgs) }} onBack={() => setLoginProvider(undefined)} onSuccess={() => { setLoginProvider(undefined); void useAppStore.getState().fetchModels(); }} />}
             <div className={modelsOpen ? "hidden" : "flex min-h-0 flex-1 flex-col"}>
               <ChatView />
               <Composer active={!modelsOpen} onOpenModels={() => setModelsOpen(true)} />

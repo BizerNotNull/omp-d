@@ -7,18 +7,23 @@ flowchart LR
   UI["React renderer\n(src/)"]
   RS["Rust supervisor\n(src-tauri/src/)"]
   OMP["omp --mode rpc-ui"]
+  AUTH["omp --mode rpc --no-session\n(provider login worker)"]
   FS["~/.omp/agent\nsessions, settings"]
 
-  UI -- "invoke: start_agent / rpc_send / list_sessions" --> RS
+  UI -- "invoke: start_agent / rpc_send / auth_start / auth_send" --> RS
   RS -- "JSONL commands on stdin" --> OMP
   OMP -- "JSONL frames on stdout" --> RS
   RS -- "omp://frame, omp://process, omp://stderr" --> UI
+  RS -- "attempt-scoped login commands" --> AUTH
+  AUTH -- "private input inbox + auth events" --> RS
+  RS -- "omp://auth" --> UI
   OMP -- "session + artifact state" --> FS
+  AUTH -- "provider credentials" --> FS
   RS -- "reads session headers" --> FS
 ```
 
 The Rust process is the only process owner. The React layer never spawns
-anything; it asks `start_agent` and writes commands through `rpc_send`.
+children; it asks the supervisor to start, send to, or stop them.
 
 ## Startup
 
@@ -42,6 +47,21 @@ anything; it asks `start_agent` and writes commands through `rpc_send`.
    `get_state`, `get_messages`, `get_session_stats`,
    `get_available_thinking_levels` and `get_available_commands`, and loads the
    session bucket through Rust `list_sessions`.
+
+## Provider login
+
+The `/models` provider sidebar retains model availability as a separate
+catalog fact. Double-clicking a provider with no available models opens its
+login page; a single click still filters the model catalog.
+
+Login runs in a separate attempt-scoped `omp --mode rpc --no-session` child.
+The native supervisor supplies a temporary extension and a private extension
+input request for login commands, so these commands never become chat prompts.
+The extension lists OAuth methods from omp's provider registry and invokes the
+same `authStorage.oauth.login` flow as the TUI. Browser URLs and prompts are
+forwarded to the page; secrets remain transient and are redacted from auth
+events. Cancelling stops the worker. After success, the worker refreshes that
+provider's model discovery before the page reloads the CLI model catalog.
 
 ## Framing
 

@@ -4,6 +4,7 @@ mod catalog;
 mod git_status;
 mod rpc_frame;
 mod sessions;
+mod settings;
 
 use agent::{AgentState, StartOptions};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -38,6 +39,21 @@ async fn model_catalog(options: StartOptions) -> Result<serde_json::Value, Strin
 #[tauri::command]
 async fn model_roles(options: StartOptions) -> Result<std::collections::BTreeMap<String, String>, String> {
     catalog::roles(options).await
+}
+
+#[tauri::command]
+async fn native_settings(options: StartOptions) -> Result<settings::Settings, String> {
+    settings::native_settings(options).await
+}
+
+#[tauri::command]
+async fn native_setting_write(
+    options: StartOptions,
+    key: String,
+    value: Option<String>,
+    reset: bool,
+) -> Result<settings::WriteResult, String> {
+    settings::native_setting_write(options, key, value, reset).await
 }
 
 #[tauri::command]
@@ -104,6 +120,8 @@ pub fn run() {
             rpc_send,
             model_catalog,
             model_roles,
+            native_settings,
+            native_setting_write,
             auth_start,
             auth_send,
             auth_stop,

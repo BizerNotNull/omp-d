@@ -73,7 +73,7 @@ export function AppShell() {
             {modelsOpen && loginProvider && <ProviderLogin key={`${cwd}:${loginProvider}`} provider={loginProvider} options={{ cwd, binary: preferences.binary.trim() || "omp", extraArgs: splitExtraArgs(preferences.extraArgs) }} onBack={() => setLoginProvider(undefined)} onSuccess={() => { setLoginProvider(undefined); void useAppStore.getState().fetchModels(); }} />}
             <div className={modelsOpen ? "hidden" : "flex min-h-0 flex-1 flex-col"}>
               <ChatView />
-              <Composer active={!modelsOpen} onOpenModels={() => setModelsOpen(true)} />
+              <Composer active={!modelsOpen && !settingsOpen} onOpenModels={() => setModelsOpen(true)} onOpenSettings={() => setSettingsOpen(true)} />
             </div>
           </main>
           {panelOpen && !modelsOpen && <RightPanel />}

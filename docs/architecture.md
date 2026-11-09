@@ -63,6 +63,36 @@ forwarded to the page; secrets remain transient and are redacted from auth
 events. Cancelling stops the worker. After success, the worker refreshes that
 provider's model discovery before the page reloads the CLI model catalog.
 
+## Native configuration
+
+`/settings`, the toolbar and the settings keyboard shortcut open the same
+settings surface. `NativeSettings` reads the configured binary, project and
+profile through `native_settings`; desktop launcher drafts do not change that
+scope until saved.
+
+`settings.rs` queries `omp config list --json` for the complete effective
+catalog and `config list --scope global --json` for stored global overrides.
+Only global values initialize editable drafts. Project/environment defaults
+are descriptive and are never copied into the global layer on opening or
+saving an unrelated row. Human `config list` output supplies native category
+and enum metadata; format drift falls back to key-prefix groups/text editors
+without dropping JSON catalog entries.
+
+`native_setting_write` serializes global mutations and calls native
+`config set` or `config reset` with literal argv, native validation and a
+30-second timeout. Reset removes one global key. Writes return provenance
+labels only, never the CLI's plaintext credential value. Credential drafts
+stay blank until explicitly replaced, and subprocess errors are sanitized.
+Successful writes refresh effective summaries without discarding other row
+drafts. Replaced scopes and stale requests cannot update the current editor.
+
+Changes persist in omp's configuration, independently of the running agent.
+The explicit restart action uses the existing session-preserving restart path.
+Native terminal appearance settings do not change the desktop renderer.
+Config commands do not accept launcher `--config` flags; the editor warns
+about that difference and never writes an overlay or project file.
+
+
 ## Framing
 
 `rpc_frame.rs` implements the protocol-v2 decoder:

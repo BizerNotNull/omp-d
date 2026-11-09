@@ -16,6 +16,7 @@ The app spawns a local `omp --mode rpc-ui` process and speaks its newline-delimi
 - Goal commands: `/goal <objective>` or `/goal set <objective>` starts a goal; `/goal` and `/goal show` display it; `/goal pause`, `/goal resume`, and `/goal drop` manage its lifecycle. The Activity rail shows its status and usage. Budget editing and `/guided-goal` require runtime RPC operations that are not currently available.
 - Extension UI dialogs for `select`, `confirm`, `input`, `editor` and `ask`, plus `notify`, status marks and widgets.
 - Activity rail with TODOs, running tools, context usage, spend and agent notices.
+- Native `/settings` editor: searchable catalog from the configured omp installation, native categories and enum choices, typed scalar/JSON editors, masked credentials, and per-setting global Save/Reset. Effective project/environment values are shown separately from global drafts. Desktop launch preferences remain in a separate tab.
 - Process supervision: v1/v2 RPC framing, chunk reassembly, crash detection, clean shutdown, and restart that preserves the current session.
 
 ## Requirements
@@ -43,6 +44,17 @@ bun tauri build            # installers (MSI/NSIS on Windows)
 ```
 
 The bundled app expects `omp` on `PATH` unless the Settings dialog stores a different binary.
+
+Open Settings from the toolbar, `Ctrl+,` (`Cmd+,` on macOS), or `/settings`.
+The Oh My Pi tab reads every option exposed by `omp config list --json`,
+including options outside the TUI's usual tabs. Save writes to native global
+`config.yml`; Reset removes that global override without changing project
+configuration. Reload discards unsaved drafts. Restart the agent after saving
+to apply changes to the running session. Terminal appearance options configure
+the TUI, not the desktop renderer. Launcher `--config` overlays cannot be edited
+or included in queries through the native config CLI; the page warns when used.
+The Desktop & runtime tab retains binary, model, extra arguments, theme and
+process diagnostics.
 
 ## Architecture
 

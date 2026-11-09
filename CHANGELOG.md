@@ -2,8 +2,9 @@
 
 ## Unreleased
 
-### Changed
-- Model picker roles follow omp's canonical role order (default, smol, slow, vision, plan, commit, tiny, memory, task, advisor, widget, image, web, speech, dictation, judge) instead of alphabetical order; custom roles follow built-ins
+### Added
+- Native Oh My Pi settings editor with live catalog discovery, category/search filters, typed scalar and JSON controls, credential masking, global save/reset, effective-value summaries, and explicit agent restart
+- Local `/settings` command opens the editor without sending a chat prompt; desktop launch preferences and runtime diagnostics remain in their own tab
 ## 0.1.0 — 2026-11-06
 
 Initial desktop client for Oh My Pi.

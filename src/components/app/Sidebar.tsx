@@ -96,6 +96,11 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-0.5 px-2 pb-3">
+          {sessionsLoading && sessions.length === 0 && (
+            <div role="status" className="px-2 py-6 text-center text-[11px] text-muted-foreground">
+              Loading sessions…
+            </div>
+          )}
           {sessions.length === 0 && !sessionsLoading && (
             <div className="px-2 py-6 text-center text-[11px] text-muted-foreground">
               <MessageSquarePlus className="mx-auto mb-2 size-5 opacity-40" />

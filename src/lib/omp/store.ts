@@ -169,6 +169,7 @@ let noticeSeq = 0;
 let initialized = false;
 let connectTicket = 0;
 let catalogRequest = 0;
+let sessionsRequest = 0;
 let refreshing = false;
 let refreshAgain = false;
 
@@ -247,6 +248,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
 
   connect: async (cwd, prefs) => {
     const ticket = ++connectTicket;
+    ++sessionsRequest;
     const preferences = { ...get().preferences, ...prefs };
     const cachedCatalog = readCatalog(catalogCacheKey(cwd, preferences));
     set({
@@ -257,6 +259,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
       ...cachedCatalog,
       modelsLoading: false,
       modelsError: undefined,
+      sessions: [],
+      sessionsLoading: true,
       messages: withMessageKeys([]).messages,
       messageKeys: new Set<string>(),
       pending: [],
@@ -283,10 +287,11 @@ export const useAppStore = create<AppState>()((set, get) => ({
       void get().fetchModels();
       await omp.send({ type: "set_ask_dialog", enabled: true }).catch(() => {});
       await get().refreshAll();
+      if (ticket !== connectTicket) return;
       await get().loadSessions();
     } catch (error) {
       if (ticket !== connectTicket) return;
-      set({ status: "error", error: describeError(error) });
+      set({ status: "error", error: describeError(error), sessionsLoading: false });
     }
   },
 
@@ -309,7 +314,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   disconnect: async () => {
     ++connectTicket;
     await omp.stop();
-    set({ status: "stopped", busy: false, queue: { steering: [], followUp: [] }, modelsLoading: false });
+    set({ status: "stopped", busy: false, queue: { steering: [], followUp: [] }, modelsLoading: false, sessionsLoading: false });
   },
 
   updatePreferences: (partial) => {
@@ -413,11 +418,14 @@ export const useAppStore = create<AppState>()((set, get) => ({
   loadSessions: async () => {
     const cwd = get().cwd;
     if (!cwd) return;
+    const request = ++sessionsRequest;
     set({ sessionsLoading: true });
     try {
       const sessions = await invoke<SessionSummary[]>("list_sessions", { cwd, limit: 40 });
+      if (request !== sessionsRequest) return;
       set({ sessions, sessionsLoading: false });
     } catch (error) {
+      if (request !== sessionsRequest) return;
       set({ sessionsLoading: false });
       pushToast(set, "warning", `Session list failed: ${describeError(error)}`);
     }

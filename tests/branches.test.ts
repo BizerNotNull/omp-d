@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { projectMessageBranches } from "../src/lib/omp/branches";
-import type { AgentMessage, SessionTree, SessionTreeNode, UserMessage } from "../src/lib/omp/types";
+import { projectMessageBranches, sessionTreeFromEntries } from "../src/lib/omp/branches";
+import type { AgentMessage, SessionTree, SessionTreeEntry, SessionTreeNode, UserMessage } from "../src/lib/omp/types";
 
 function user(text: string, timestamp: number, extra: Partial<UserMessage> = {}): UserMessage {
   return { role: "user", content: text, timestamp, ...extra };
@@ -130,18 +130,19 @@ test("fully identical repeated identities consume distinct entries in transcript
 
 test("deep histories project iteratively without overflowing the call stack", () => {
   const prompt = user("deep", 1);
-  const root = node("root", 1, prompt);
-  let tail = root;
+  const entries: SessionTreeEntry[] = [{ id: "root", parentId: null, type: "message", message: prompt, timestamp: new Date(1).toISOString() }];
   for (let index = 0; index < 25_000; index++) {
-    const child = node(`metadata-${index}`, index + 2);
-    child.entry.parentId = tail.entry.id;
-    tail.children.push(child);
-    tail = child;
+    entries.push({
+      id: `metadata-${index}`, parentId: index ? `metadata-${index - 1}` : "root",
+      type: "custom", timestamp: new Date(index + 2).toISOString(),
+    });
   }
-  const projected = projectMessageBranches({ tree: [root], leafId: tail.entry.id }, [prompt]);
+  const leafId = entries[entries.length - 1].id;
+  const tree = sessionTreeFromEntries({ entries, leafId });
+  const projected = projectMessageBranches(tree, [prompt]);
   expect(projected[0]).toEqual({
     entryId: "root", index: 0,
-    alternatives: [{ entryId: "root", leafId: tail.entry.id }],
+    alternatives: [{ entryId: "root", leafId }],
   });
 });
 

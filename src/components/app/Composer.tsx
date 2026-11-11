@@ -36,7 +36,6 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
 
   const busy = useAppStore((state) => state.busy);
   const branching = useAppStore((state) => state.branching);
-  const treeLoading = useAppStore((state) => state.treeLoading);
   const status = useAppStore((state) => state.status);
   const commands = useAppStore((state) => state.commands);
   const queue = useAppStore((state) => state.queue);
@@ -93,7 +92,7 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
 
   useEffect(() => setSuggestionIndex(0), [commandQuery]);
 
-  const disabled = status !== "ready" || submitting || branching || treeLoading;
+  const disabled = status !== "ready" || submitting || branching;
 
   async function submit(behavior?: "steer" | "followUp") {
     if (disabled || sendingRef.current) return;
@@ -152,7 +151,7 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (branching || treeLoading) return;
+    if (branching) return;
     if (suggestions.length > 0) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -222,7 +221,7 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
                 label="steering"
                 message={message}
                 live={index < (queue.liveSteered ?? 0)}
-                disabled={branching || treeLoading}
+                disabled={branching}
                 onRemove={() => void removeQueued(message, "steering")}
               />
             ))}
@@ -231,7 +230,7 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
                 key={`follow-${index}-${message}`}
                 label="queued"
                 message={message}
-                disabled={branching || treeLoading}
+                disabled={branching}
                 onRemove={() => void removeQueued(message, "followUp")}
               />
             ))}
@@ -291,7 +290,7 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
           <div className="rounded-2xl border border-border/80 bg-card shadow-[0_8px_30px_-12px_rgba(0,0,0,0.45)] focus-within:border-ring/60 focus-within:ring-3 focus-within:ring-ring/10">
             <Textarea
               ref={textareaRef}
-              disabled={branching || treeLoading}
+              disabled={branching}
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={onKeyDown}
@@ -315,7 +314,7 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
                     variant="ghost"
                     size="icon-sm"
                     onClick={() => void abort()}
-                    disabled={branching || treeLoading}
+                    disabled={branching}
                     aria-label="Stop the agent"
                     className="text-muted-foreground hover:text-destructive"
                   >

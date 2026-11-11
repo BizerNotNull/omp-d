@@ -4,7 +4,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { create } from "zustand";
 import { omp, RpcFailure, type OmpClientEvent } from "./client";
 import { catalogCacheKey, readCatalog, splitExtraArgs, writeCatalog } from "./model-catalog";
-import { projectMessageBranches, type MessageBranch } from "./branches";
+import { projectMessageBranches, sessionTreeFromEntries, type MessageBranch } from "./branches";
 import type {
   AgentMessage,
   AvailableCommand,
@@ -22,6 +22,7 @@ import type {
   SessionStats,
   SessionSummary,
   SessionTree,
+  SessionEntries,
   StartInfo,
   TodoPhase,
 } from "./types";
@@ -149,6 +150,7 @@ interface AppState {
   openProjectDialog: () => Promise<void>;
 
   refreshAll: () => Promise<void>;
+  refreshTree: () => Promise<void>;
   refreshState: () => Promise<void>;
   refreshGitStatus: () => Promise<void>;
   refreshMessages: () => Promise<void>;
@@ -188,6 +190,7 @@ let refreshing: Promise<void> | undefined;
 let refreshAgain = false;
 let gitRefreshKey: string | undefined;
 let conversationRevision = 0;
+let treeRequest = 0;
 let treeWarningGeneration: number | undefined;
 
 function messageKey(message: AgentMessage): string {
@@ -374,21 +377,14 @@ export const useAppStore = create<AppState>()((set, get) => ({
     refreshing = promise;
     const generation = omp.generation;
     const revision = conversationRevision;
-    set({ treeLoading: true });
+    void get().refreshTree();
     try {
-      const [state, messages, stats, levels, commands, tree] = await Promise.all([
+      const [state, messages, stats, levels, commands] = await Promise.all([
         omp.send<RpcSessionState>({ type: "get_state" }).catch(() => undefined),
         omp.send<{ messages: AgentMessage[] }>({ type: "get_messages" }).catch(() => undefined),
         omp.send<SessionStats>({ type: "get_session_stats" }).catch(() => undefined),
         omp.send<{ levels: string[] }>({ type: "get_available_thinking_levels" }).catch(() => undefined),
         omp.send<{ commands: AvailableCommand[] }>({ type: "get_available_commands" }).catch(() => undefined),
-        omp.send<SessionTree>({ type: "get_tree" }).catch((error) => {
-          if (omp.generation === generation && revision === conversationRevision && treeWarningGeneration !== generation) {
-            treeWarningGeneration = generation;
-            pushToast(set, "warning", `Conversation branches unavailable: ${describeError(error)}`);
-          }
-          return undefined;
-        }),
       ]);
       if (omp.generation !== generation || revision !== conversationRevision) return;
       const session = state?.data;
@@ -397,8 +393,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
         session: session ?? current.session,
         stats: stats?.data ?? current.stats,
         ...(transcript ? withMessageKeys(transcript) : { messages: current.messages, messageKeys: current.messageKeys }),
-        sessionTree: tree?.data,
-        messageBranches: tree?.data ? projectMessageBranches(tree.data, transcript ?? current.messages) : [],
+        messageBranches: current.sessionTree ? projectMessageBranches(current.sessionTree, transcript ?? current.messages) : [],
         pending: transcript ? [] : current.pending,
         thinkingLevels: levels?.data?.levels ?? current.thinkingLevels,
         commands: commands?.data?.commands ?? current.commands,
@@ -419,12 +414,35 @@ export const useAppStore = create<AppState>()((set, get) => ({
       }
     } finally {
       refreshing = undefined;
-      if (omp.generation === generation && revision === conversationRevision) set({ treeLoading: false });
       if (refreshAgain) {
         refreshAgain = false;
         await get().refreshAll();
       }
       complete();
+    }
+  },
+
+  refreshTree: async () => {
+    const generation = omp.generation;
+    const revision = conversationRevision;
+    const request = ++treeRequest;
+    const current = () => generation === omp.generation && revision === conversationRevision && request === treeRequest && get().status === "ready";
+    set({ treeLoading: true });
+    try {
+      const response = await omp.send<SessionEntries>({ type: "get_entries" });
+      if (!current()) return;
+      if (!response.data) throw new Error("The runtime did not return session entries.");
+      const sessionTree = sessionTreeFromEntries(response.data);
+      set((state) => ({ sessionTree, messageBranches: projectMessageBranches(sessionTree, state.messages) }));
+    } catch (error) {
+      if (!current()) return;
+      set({ sessionTree: undefined, messageBranches: [] });
+      if (treeWarningGeneration !== generation) {
+        treeWarningGeneration = generation;
+        pushToast(set, "warning", `Conversation branches unavailable: ${describeError(error)}`);
+      }
+    } finally {
+      if (current()) set({ treeLoading: false });
     }
   },
 

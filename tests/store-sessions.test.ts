@@ -1,5 +1,5 @@
 import { beforeEach, expect, mock, test } from "bun:test";
-import type { AgentMessage, ImageContent, RpcCommand, SessionTree } from "../src/lib/omp/types";
+import type { AgentMessage, ImageContent, RpcCommand, SessionEntries, SessionTree } from "../src/lib/omp/types";
 
 let starts: PromiseWithResolvers<{ cwd: string }>[] = [];
 let lists: { cwd: string; result: PromiseWithResolvers<{ path: string; title: string }[]> }[] = [];
@@ -111,6 +111,10 @@ function forkState() {
   return { original, answer, image, tree };
 }
 
+function entryResponse(tree: SessionTree) {
+  return { entries: tree.tree.flatMap((node) => [node.entry, ...node.children.map((child) => child.entry)]), leafId: tree.leafId };
+}
+
 test("a cancelled fork preserves the current conversation and never submits the edit", async () => {
   const { original, answer } = forkState();
   send = async (command) => {
@@ -139,7 +143,7 @@ test("fork navigation locks submissions and preserves attachments on the new bra
       return { data: { agentInvoked: false } };
     }
     if (command.type === "get_messages") return { data: { messages: [edited] } };
-    if (command.type === "get_tree") return { data: tree };
+    if (command.type === "get_entries") return { data: entryResponse(tree) };
     return {};
   };
   const fork = store.getState().forkMessage("user", "edited");
@@ -160,7 +164,7 @@ test("failed fork submission restores an editable draft with its attachments", a
     if (command.type === "navigate_tree") return { data: { cancelled: false } };
     if (command.type === "prompt") throw new Error("Provider unavailable");
     if (command.type === "get_messages") return { data: { messages: [] } };
-    if (command.type === "get_tree") return { data: { ...tree, leafId: null } };
+    if (command.type === "get_entries") return { data: entryResponse({ ...tree, leafId: null }) };
     return {};
   };
   expect(await store.getState().forkMessage("user", "retry this")).toBe(false);
@@ -181,10 +185,34 @@ test("branch switching restores a saved tail without submitting another prompt",
     if (command.type === "prompt") throw new Error("Switching must not regenerate");
     if (command.type === "navigate_tree") return { data: { cancelled: false } };
     if (command.type === "get_messages") return { data: { messages: [original, answer] } };
-    if (command.type === "get_tree") return { data: tree };
+    if (command.type === "get_entries") return { data: entryResponse(tree) };
     return {};
   };
   expect(await store.getState().switchBranch("answer")).toBe(true);
   expect(store.getState()).toMatchObject({ messages: [original, answer], branching: false });
+  expect(store.getState().messageBranches[0]?.entryId).toBe("user");
+});
+
+test("delayed branch metadata never blocks transcript hydration or ordinary prompts", async () => {
+  const { tree, original, answer } = forkState();
+  store.setState({ messages: [], sessionTree: undefined, messageBranches: [] });
+  const entries = Promise.withResolvers<{ data: SessionEntries }>();
+  send = async (command) => {
+    if (command.type === "get_entries") return entries.promise;
+    if (command.type === "get_messages") return { data: { messages: [original, answer] } };
+    if (command.type === "get_state") return { data: { sessionName: "Regression", isStreaming: false } };
+    return {};
+  };
+  const hydration = store.getState().refreshAll();
+  const branches = store.getState().refreshTree();
+  try {
+    await hydration;
+    expect(store.getState()).toMatchObject({ messages: [original, answer], treeLoading: true });
+    expect(await store.getState().prompt("a normal follow-up")).toBe(true);
+  } finally {
+    entries.resolve({ data: entryResponse(tree) });
+    await branches;
+  }
+  expect(store.getState().treeLoading).toBe(false);
   expect(store.getState().messageBranches[0]?.entryId).toBe("user");
 });

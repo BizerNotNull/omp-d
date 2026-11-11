@@ -145,6 +145,12 @@ export interface SessionTreeEntry {
   message?: AgentMessage;
 }
 
+/** Flat append history returned by get_entries, without wire-level tree nesting. */
+export interface SessionEntries {
+  entries: SessionTreeEntry[];
+  leafId: string | null;
+}
+
 export interface SessionTreeNode {
   entry: SessionTreeEntry;
   children: SessionTreeNode[];

@@ -91,7 +91,7 @@ Protocol v1 is the baseline. The client negotiates v2 after `ready`, letting fra
 - One agent process per window. Session switching aborts an in-flight turn, as the RPC command does.
 - Image attachments are supported through paste; files are not attached through the picker yet.
 - The transcript is loaded in one `get_messages` response; extremely long sessions can take a moment to hydrate.
-- Tree navigation requires an omp version with `get_tree` and `navigate_tree`. As in omp's tree UI, selecting a branch that ended on an unanswered user message restores that prompt to the composer.
+- Tree navigation requires an omp version with `get_entries` and `navigate_tree`. Branch metadata loads separately and does not disable typing, sending or stopping the agent. As in omp's tree UI, selecting a branch that ended on an unanswered user message restores that prompt to the composer.
 
 ## Tests
 

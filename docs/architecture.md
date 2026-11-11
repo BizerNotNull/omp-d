@@ -44,9 +44,10 @@ children; it asks the supervisor to start, send to, or stop them.
 4. `OmpClient.start` waits up to 45 s for the `ready` frame. On `ready` it sends
    `negotiate_protocol(2)` when advertised and resolves the start.
 5. `connect` sends `set_ask_dialog(enabled: true)`, then hydrates with
-   `get_state`, `get_messages`, `get_tree`, `get_session_stats`,
+   `get_state`, `get_messages`, `get_session_stats`,
    `get_available_thinking_levels` and `get_available_commands`, and loads the
-   session bucket through Rust `list_sessions`.
+   session bucket through Rust `list_sessions`. A separate `get_entries`
+   request loads branch metadata without blocking transcript hydration.
 
 ## Provider login
 
@@ -95,11 +96,14 @@ about that difference and never writes an overlay or project file.
 
 ## Conversation forks
 
-`get_tree` supplies persisted entry IDs and the active leaf. `branches.ts`
+`get_entries` supplies flat persisted entries and the active leaf. `branches.ts`
 matches active-path user entries to transcript messages by role, timestamp and
 content, including attachments. Alternatives share their nearest preceding
 message entry; non-message metadata does not split that group. Nested forks
 remain separate. Traversals are iterative for long histories.
+It builds the tree locally from parent IDs, avoiding the native JSON decoder's
+depth limit on nested `get_tree` responses. Branch metadata refreshes cannot
+disable the composer, sending, queue removal or abort controls.
 
 Editing stays local until Save & fork. The store calls `navigate_tree` on the
 original user entry with summarization disabled; omp moves to its parent.
@@ -114,7 +118,7 @@ also requires idle streaming, background work and queues. Generation and
 conversation-revision checks discard stale hydration/navigation results.
 After navigation the store clears branch-specific transient UI state and
 refreshes messages, tree and session state. Failed prompt submission restores
-the edited text and attachments to the composer. An unavailable tree API
+the edited text and attachments to the composer. An unavailable entries API
 reports a warning and leaves edit/branch controls absent.
 
 ## Framing

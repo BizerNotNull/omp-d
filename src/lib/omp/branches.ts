@@ -1,9 +1,23 @@
-import type { AgentMessage, SessionTree, SessionTreeNode } from "./types";
+import type { AgentMessage, SessionEntries, SessionTree, SessionTreeNode } from "./types";
 
 export interface MessageBranch {
   entryId: string;
   alternatives: Array<{ entryId: string; leafId: string }>;
   index: number;
+}
+
+/** Build the local tree without sending depth-proportional JSON through native IPC. */
+export function sessionTreeFromEntries({ entries, leafId }: SessionEntries): SessionTree {
+  const nodes = new Map<string, SessionTreeNode>();
+  for (const entry of entries) nodes.set(entry.id, { entry, children: [] });
+  const tree: SessionTreeNode[] = [];
+  for (const entry of entries) {
+    const node = nodes.get(entry.id)!;
+    const parent = entry.parentId === null ? undefined : nodes.get(entry.parentId);
+    if (parent) parent.children.push(node);
+    else tree.push(node);
+  }
+  return { tree, leafId };
 }
 
 function editable(message: AgentMessage): boolean {

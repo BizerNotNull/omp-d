@@ -7,6 +7,7 @@
 - Per-message branch counters and previous/next arrows restore saved conversation tails without resubmitting prompts.
 
 ### Fixed
+- Fix long-chat page/input freezes: load flat session entries instead of nested tree responses, and keep branch metadata loading independent of transcript hydration and composer controls.
 - Keep `bun tauri dev` open during `/wt <branch>` by disabling native watcher auto-restarts; frontend hot reload remains enabled. Use `bunx tauri dev` to opt into native watching
 ## 0.1.0 — 2026-11-06
 

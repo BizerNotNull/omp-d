@@ -105,13 +105,16 @@ It builds the tree locally from parent IDs, avoiding the native JSON decoder's
 depth limit on nested `get_tree` responses. Branch metadata refreshes cannot
 disable the composer, sending, queue removal or abort controls.
 
-Editing stays local until Save & fork. The store calls `navigate_tree` on the
-original user entry with summarization disabled; omp moves to its parent.
-Only a successful, non-cancelled navigation submits the edited prompt with the
-original images. Branch arrows navigate directly to a saved descendant leaf,
+Editing stays local until Save & fork. The store calls same-session
+`navigate_tree` on the original user entry with summarization disabled; omp
+moves the leaf to its parent without creating a session file or changing
+`sessionId`. Only a successful, non-cancelled navigation submits the edited
+prompt to the agent through the normal `prompt` RPC command, preserving the
+original images. The resulting response and later prompts remain in that
+session. Branch arrows navigate directly to a saved descendant leaf,
 preferring the current leaf for the active alternative and the newest tail
-for inactive alternatives. No new session file or local branch database is
-created. An unanswered user-only leaf follows omp's draft-restoration behavior.
+for inactive alternatives. No local branch database is created. An unanswered
+user-only leaf follows omp's draft-restoration behavior.
 
 `branching` locks prompt submission and other session transitions. Branching
 also requires idle streaming, background work and queues. Generation and

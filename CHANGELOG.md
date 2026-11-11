@@ -3,8 +3,8 @@
 ## Unreleased
 
 ### Added
-- Edit sent user messages with a pencil and Save & fork; preserve original conversation branches and image attachments in omp's session tree.
-- Per-message branch counters and previous/next arrows restore saved conversation tails without resubmitting prompts.
+- Edit sent user messages with a pencil and Save & fork in the current omp session, using its `/tree` navigation. The edited prompt is sent to the agent; original branches and image attachments remain available.
+- Per-message branch counters and previous/next arrows restore saved conversation tails in the same session without resubmitting prompts.
 
 ### Fixed
 - Fix long-chat page/input freezes: load flat session entries instead of nested tree responses, and keep branch metadata loading independent of transcript hydration and composer controls.

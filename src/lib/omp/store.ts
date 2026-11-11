@@ -4,6 +4,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { create } from "zustand";
 import { omp, RpcFailure, type OmpClientEvent } from "./client";
 import { catalogCacheKey, readCatalog, splitExtraArgs, writeCatalog } from "./model-catalog";
+import { projectMessageBranches, type MessageBranch } from "./branches";
 import type {
   AgentMessage,
   AvailableCommand,
@@ -13,16 +14,18 @@ import type {
   GitStatus,
   ImageContent,
   Model,
+  NavigateTreeResult,
   PromptResultFrame,
   RpcCommand,
   RpcFrame,
   RpcSessionState,
   SessionStats,
   SessionSummary,
+  SessionTree,
   StartInfo,
   TodoPhase,
 } from "./types";
-import { firstLine, modelLabel, stripPrivateUse } from "./format";
+import { firstLine, imageBlocks, modelLabel, stripPrivateUse } from "./format";
 
 const LAST_CWD_KEY = "ompd:lastCwd";
 const PREFS_KEY = "ompd:prefs";
@@ -113,6 +116,10 @@ interface AppState {
   toolRuns: Record<string, ToolRun>;
   queue: { steering: string[]; followUp: string[]; liveSteered?: number };
   busy: boolean;
+  sessionTree?: SessionTree;
+  messageBranches: Array<MessageBranch | undefined>;
+  treeLoading: boolean;
+  branching: boolean;
 
   commands: AvailableCommand[];
   thinkingLevels: string[];
@@ -132,6 +139,7 @@ interface AppState {
   diagnostics: string[];
   editorText?: string;
   editorToken: number;
+  editorImages?: ImageContent[];
 
   bootstrap: () => Promise<void>;
   connect: (cwd: string, prefs?: Partial<Preferences>) => Promise<void>;
@@ -144,6 +152,8 @@ interface AppState {
   refreshState: () => Promise<void>;
   refreshGitStatus: () => Promise<void>;
   refreshMessages: () => Promise<void>;
+  forkMessage: (entryId: string, text: string) => Promise<boolean>;
+  switchBranch: (entryId: string) => Promise<boolean>;
   loadSessions: () => Promise<void>;
 
   prompt: (text: string, images?: ImageContent[], behavior?: "steer" | "followUp") => Promise<boolean>;
@@ -174,9 +184,11 @@ let initialized = false;
 let connectTicket = 0;
 let catalogRequest = 0;
 let sessionsRequest = 0;
-let refreshing = false;
+let refreshing: Promise<void> | undefined;
 let refreshAgain = false;
 let gitRefreshKey: string | undefined;
+let conversationRevision = 0;
+let treeWarningGeneration: number | undefined;
 
 function messageKey(message: AgentMessage): string {
   const timestamp = typeof message.timestamp === "number" ? message.timestamp : 0;
@@ -217,6 +229,9 @@ export const useAppStore = create<AppState>()((set, get) => ({
   toolRuns: {},
   queue: { steering: [], followUp: [] },
   busy: false,
+  messageBranches: [],
+  treeLoading: false,
+  branching: false,
 
   commands: [],
   thinkingLevels: [],
@@ -253,6 +268,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
 
   connect: async (cwd, prefs) => {
     const ticket = ++connectTicket;
+    ++conversationRevision;
     ++sessionsRequest;
     const preferences = { ...get().preferences, ...prefs };
     const cachedCatalog = readCatalog(catalogCacheKey(cwd, preferences));
@@ -270,6 +286,10 @@ export const useAppStore = create<AppState>()((set, get) => ({
       messageKeys: new Set<string>(),
       pending: [],
       toolRuns: {},
+      sessionTree: undefined,
+      messageBranches: [],
+      treeLoading: false,
+      branching: false,
       dialogs: [],
       notices: [],
       statusMarks: {},
@@ -321,7 +341,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   disconnect: async () => {
     ++connectTicket;
     await omp.stop();
-    set({ status: "stopped", busy: false, queue: { steering: [], followUp: [] }, modelsLoading: false, sessionsLoading: false });
+    set({ status: "stopped", busy: false, branching: false, treeLoading: false, queue: { steering: [], followUp: [] }, modelsLoading: false, sessionsLoading: false });
   },
 
   updatePreferences: (partial) => {
@@ -347,25 +367,38 @@ export const useAppStore = create<AppState>()((set, get) => ({
   refreshAll: async () => {
     if (refreshing) {
       refreshAgain = true;
+      await refreshing;
       return;
     }
-    refreshing = true;
+    const { promise, resolve: complete } = Promise.withResolvers<void>();
+    refreshing = promise;
     const generation = omp.generation;
+    const revision = conversationRevision;
+    set({ treeLoading: true });
     try {
-      const [state, messages, stats, levels, commands] = await Promise.all([
+      const [state, messages, stats, levels, commands, tree] = await Promise.all([
         omp.send<RpcSessionState>({ type: "get_state" }).catch(() => undefined),
         omp.send<{ messages: AgentMessage[] }>({ type: "get_messages" }).catch(() => undefined),
         omp.send<SessionStats>({ type: "get_session_stats" }).catch(() => undefined),
         omp.send<{ levels: string[] }>({ type: "get_available_thinking_levels" }).catch(() => undefined),
         omp.send<{ commands: AvailableCommand[] }>({ type: "get_available_commands" }).catch(() => undefined),
+        omp.send<SessionTree>({ type: "get_tree" }).catch((error) => {
+          if (omp.generation === generation && revision === conversationRevision && treeWarningGeneration !== generation) {
+            treeWarningGeneration = generation;
+            pushToast(set, "warning", `Conversation branches unavailable: ${describeError(error)}`);
+          }
+          return undefined;
+        }),
       ]);
-      if (omp.generation !== generation) return;
+      if (omp.generation !== generation || revision !== conversationRevision) return;
       const session = state?.data;
       const transcript = messages?.data?.messages;
       set((current) => ({
         session: session ?? current.session,
         stats: stats?.data ?? current.stats,
         ...(transcript ? withMessageKeys(transcript) : { messages: current.messages, messageKeys: current.messageKeys }),
+        sessionTree: tree?.data,
+        messageBranches: tree?.data ? projectMessageBranches(tree.data, transcript ?? current.messages) : [],
         pending: transcript ? [] : current.pending,
         thinkingLevels: levels?.data?.levels ?? current.thinkingLevels,
         commands: commands?.data?.commands ?? current.commands,
@@ -385,11 +418,13 @@ export const useAppStore = create<AppState>()((set, get) => ({
         pushToast(set, "warning", describeError(error));
       }
     } finally {
-      refreshing = false;
+      refreshing = undefined;
+      if (omp.generation === generation && revision === conversationRevision) set({ treeLoading: false });
       if (refreshAgain) {
         refreshAgain = false;
-        void get().refreshAll();
+        await get().refreshAll();
       }
+      complete();
     }
   },
 
@@ -435,14 +470,34 @@ export const useAppStore = create<AppState>()((set, get) => ({
   },
 
   refreshMessages: async () => {
+    const generation = omp.generation;
+    const revision = conversationRevision;
     try {
       const res = await omp.send<{ messages: AgentMessage[] }>({ type: "get_messages" });
-      set({ ...withMessageKeys(res.data?.messages ?? []), pending: [] });
+      if (generation !== omp.generation || revision !== conversationRevision) return;
+      set((state) => ({
+        ...withMessageKeys(res.data?.messages ?? []),
+        messageBranches: state.sessionTree ? projectMessageBranches(state.sessionTree, res.data?.messages ?? []) : [],
+        pending: [],
+      }));
     } catch {
       // ignore
     }
   },
 
+  forkMessage: async (entryId, text) => {
+    if (!text.trim()) return false;
+    const state = get();
+    const index = state.messageBranches.findIndex((branch) => branch?.entryId === entryId);
+    if (index < 0) return false;
+    return navigateConversation(set, get, entryId, { text, images: imageBlocks(state.messages[index]?.content) });
+  },
+
+  switchBranch: async (entryId) => {
+    const valid = get().messageBranches.some((branch) => branch?.alternatives.some((choice) => choice.leafId === entryId));
+    if (!valid) return false;
+    return navigateConversation(set, get, entryId);
+  },
   loadSessions: async () => {
     const cwd = get().cwd;
     if (!cwd) return;
@@ -461,6 +516,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
 
   prompt: async (text, images, behavior) => {
     const trimmed = text.trim();
+    if (get().branching) return false;
     if (!trimmed) return false;
     const shouldTitle = !get().session?.sessionName && (get().session?.messageCount ?? 0) === 0 && !trimmed.startsWith("/");
     // Goal lifecycle commands must not mark an idle session as streaming.
@@ -550,6 +606,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   },
 
   compact: async () => {
+    if (get().branching) return;
     set({ busy: true });
     pushNotice(set, "progress", "Compacting conversation…");
     try {
@@ -572,15 +629,19 @@ export const useAppStore = create<AppState>()((set, get) => ({
   },
 
   newSession: async () => {
+    if (get().branching) return;
     try {
       const res = await omp.send<{ cancelled: boolean }>({ type: "new_session" });
       if (res.data?.cancelled) {
         pushToast(set, "warning", "Session change was cancelled by an extension.");
         return;
       }
+      ++conversationRevision;
       set({
         messages: [],
         messageKeys: new Set<string>(),
+        sessionTree: undefined,
+        messageBranches: [],
         pending: [],
         toolRuns: {},
         notices: [],
@@ -597,15 +658,19 @@ export const useAppStore = create<AppState>()((set, get) => ({
   },
 
   switchSession: async (path) => {
+    if (get().branching) return;
     try {
       const res = await omp.send<{ cancelled: boolean }>({ type: "switch_session", sessionPath: path });
       if (res.data?.cancelled) {
         pushToast(set, "warning", "Session switch was cancelled.");
         return;
       }
+      ++conversationRevision;
       set({
         messages: [],
         messageKeys: new Set<string>(),
+        sessionTree: undefined,
+        messageBranches: [],
         pending: [],
         toolRuns: {},
         notices: [],
@@ -702,7 +767,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
 
   dismissToast: (id) => set((state) => ({ notifications: state.notifications.filter((toast) => toast.id !== id) })),
 
-  setEditorText: (text) => set((state) => ({ editorText: text, editorToken: state.editorToken + 1 })),
+  setEditorText: (text) => set((state) => ({ editorText: text, editorImages: undefined, editorToken: state.editorToken + 1 })),
 
   applyFrame: (frame) => {
     switch (frame.type) {
@@ -862,7 +927,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
         return;
       case "disconnected":
         ++catalogRequest;
-        set({ status: "stopped", busy: false, error: event.reason, modelsLoading: false });
+        set({ status: "stopped", busy: false, branching: false, treeLoading: false, error: event.reason, modelsLoading: false });
         return;
       case "protocol":
         appendDiagnostic(set, `${event.event.kind}: ${event.event.message}`);
@@ -874,7 +939,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
       case "process":
         if (event.event.kind === "error") {
           ++catalogRequest;
-          set({ status: "error", error: event.event.message, busy: false, modelsLoading: false });
+          set({ status: "error", error: event.event.message, busy: false, branching: false, treeLoading: false, modelsLoading: false });
         }
         return;
     }
@@ -884,6 +949,73 @@ export const useAppStore = create<AppState>()((set, get) => ({
 /* ---------------------------------------------------------------- helpers */
 
 type SetState = (partial: Partial<AppState> | ((state: AppState) => Partial<AppState>)) => void;
+
+async function navigateConversation(
+  set: SetState,
+  get: () => AppState,
+  entryId: string,
+  draft?: { text: string; images: ImageContent[] },
+): Promise<boolean> {
+  const state = get();
+  if (state.status !== "ready" || state.busy || state.branching || state.treeLoading
+    || state.session?.hasPendingAsyncWork || state.queue.steering.length || state.queue.followUp.length) return false;
+  const generation = omp.generation;
+  const revision = ++conversationRevision;
+  const current = () => generation === omp.generation && revision === conversationRevision && get().status === "ready";
+  let moved = false;
+  set({ branching: true });
+  try {
+    const response = await omp.send<NavigateTreeResult>({ type: "navigate_tree", entryId, summarize: false });
+    if (!current()) return false;
+    if (!response.data) throw new Error("The runtime did not return a tree navigation result.");
+    if (response.data.cancelled || response.data.aborted) {
+      pushToast(set, "warning", "Conversation branch change was cancelled.");
+      return false;
+    }
+    moved = true;
+    set({ pending: [], toolRuns: {}, notices: [], dialogs: [], statusMarks: {}, widgets: {}, messageBranches: [] });
+    if (draft) {
+      // Submit only after the runtime has moved to the edited message's parent.
+      // Do not use prompt(): ordinary submissions stay locked during this transition.
+      set({ busy: true });
+      const result = await omp.send<{ agentInvoked?: boolean }>({
+        type: "prompt",
+        message: draft.text.trim(),
+        ...(draft.images.length ? { images: draft.images } : {}),
+      });
+      if (!current()) return false;
+      if (result.data?.agentInvoked === false) set({ busy: false });
+    } else if (response.data.editorText !== undefined) {
+      // omp rewinds a user-only leaf into a draft rather than selecting it.
+      // Preserve that behavior when a branch was aborted before any reply.
+      const nodes = [...(state.sessionTree?.tree ?? [])];
+      let images: ImageContent[] = [];
+      while (nodes.length) {
+        const node = nodes.pop()!;
+        if (node.entry.id === entryId) {
+          images = imageBlocks(node.entry.message?.content);
+          break;
+        }
+        nodes.push(...node.children);
+      }
+      set((value) => ({ editorText: response.data!.editorText, editorImages: images, editorToken: value.editorToken + 1 }));
+    }
+    await get().refreshAll();
+    return current();
+  } catch (error) {
+    if (current()) {
+      set({ busy: false });
+      if (moved && draft) {
+        set((value) => ({ editorText: draft.text, editorImages: draft.images, editorToken: value.editorToken + 1 }));
+      }
+      pushToast(set, "error", `Conversation branch failed: ${describeError(error)}`);
+      if (moved) await get().refreshAll();
+    }
+    return false;
+  } finally {
+    if (current()) set({ branching: false });
+  }
+}
 
 function pushToast(set: SetState, kind: Toast["kind"], message: string, title?: string) {
   const toast: Toast = { id: ++toastSeq, kind, message, title };

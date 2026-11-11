@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+- Edit sent user messages with a pencil and Save & fork; preserve original conversation branches and image attachments in omp's session tree.
+- Per-message branch counters and previous/next arrows restore saved conversation tails without resubmitting prompts.
+
 ### Fixed
 - Keep `bun tauri dev` open during `/wt <branch>` by disabling native watcher auto-restarts; frontend hot reload remains enabled. Use `bunx tauri dev` to opt into native watching
 ## 0.1.0 — 2026-11-06

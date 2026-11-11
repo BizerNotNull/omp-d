@@ -35,10 +35,13 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
   const sendingRef = useRef(false);
 
   const busy = useAppStore((state) => state.busy);
+  const branching = useAppStore((state) => state.branching);
+  const treeLoading = useAppStore((state) => state.treeLoading);
   const status = useAppStore((state) => state.status);
   const commands = useAppStore((state) => state.commands);
   const queue = useAppStore((state) => state.queue);
   const editorText = useAppStore((state) => state.editorText);
+  const editorImages = useAppStore((state) => state.editorImages);
   const editorToken = useAppStore((state) => state.editorToken);
   const prompt = useAppStore((state) => state.prompt);
   const abort = useAppStore((state) => state.abort);
@@ -50,12 +53,13 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
   }, [active, status]);
 
   useEffect(() => {
-    if (editorToken !== lastEditorToken.current && editorText) {
+    if (editorToken !== lastEditorToken.current && (editorText !== undefined || editorImages !== undefined)) {
       lastEditorToken.current = editorToken;
-      setDraft(editorText);
+      setDraft(editorText ?? "");
+      if (editorImages !== undefined) setImages(editorImages);
       if (active) textareaRef.current?.focus();
     }
-  }, [editorText, editorToken, active]);
+  }, [editorText, editorImages, editorToken, active]);
 
   const commandQuery = useMemo(() => {
     if (!draft.startsWith("/")) return undefined;
@@ -89,7 +93,7 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
 
   useEffect(() => setSuggestionIndex(0), [commandQuery]);
 
-  const disabled = status !== "ready" || submitting;
+  const disabled = status !== "ready" || submitting || branching || treeLoading;
 
   async function submit(behavior?: "steer" | "followUp") {
     if (disabled || sendingRef.current) return;
@@ -148,6 +152,7 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (branching || treeLoading) return;
     if (suggestions.length > 0) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -217,6 +222,7 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
                 label="steering"
                 message={message}
                 live={index < (queue.liveSteered ?? 0)}
+                disabled={branching || treeLoading}
                 onRemove={() => void removeQueued(message, "steering")}
               />
             ))}
@@ -225,6 +231,7 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
                 key={`follow-${index}-${message}`}
                 label="queued"
                 message={message}
+                disabled={branching || treeLoading}
                 onRemove={() => void removeQueued(message, "followUp")}
               />
             ))}
@@ -264,6 +271,7 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
                   <button
                     key={command.name}
                     type="button"
+                    disabled={disabled}
                     onMouseEnter={() => setSuggestionIndex(index)}
                     onClick={() => chooseCommand(command)}
                     className={cn(
@@ -283,6 +291,7 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
           <div className="rounded-2xl border border-border/80 bg-card shadow-[0_8px_30px_-12px_rgba(0,0,0,0.45)] focus-within:border-ring/60 focus-within:ring-3 focus-within:ring-ring/10">
             <Textarea
               ref={textareaRef}
+              disabled={branching || treeLoading}
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={onKeyDown}
@@ -306,6 +315,7 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
                     variant="ghost"
                     size="icon-sm"
                     onClick={() => void abort()}
+                    disabled={branching || treeLoading}
                     aria-label="Stop the agent"
                     className="text-muted-foreground hover:text-destructive"
                   >
@@ -341,10 +351,12 @@ function QueueChip({
   message,
   live,
   onRemove,
+  disabled,
 }: {
   label: string;
   message: string;
   live?: boolean;
+  disabled: boolean;
   onRemove: () => void;
 }) {
   return (
@@ -355,8 +367,9 @@ function QueueChip({
       <button
         type="button"
         onClick={onRemove}
+        disabled={disabled}
         aria-label="Remove queued message"
-        className="flex size-4 items-center justify-center rounded-full text-muted-foreground hover:bg-background hover:text-foreground"
+        className="flex size-4 items-center justify-center rounded-full text-muted-foreground hover:bg-background hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
       >
         <X className="size-3" />
       </button>

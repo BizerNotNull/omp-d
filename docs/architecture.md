@@ -44,7 +44,7 @@ children; it asks the supervisor to start, send to, or stop them.
 4. `OmpClient.start` waits up to 45 s for the `ready` frame. On `ready` it sends
    `negotiate_protocol(2)` when advertised and resolves the start.
 5. `connect` sends `set_ask_dialog(enabled: true)`, then hydrates with
-   `get_state`, `get_messages`, `get_session_stats`,
+   `get_state`, `get_messages`, `get_tree`, `get_session_stats`,
    `get_available_thinking_levels` and `get_available_commands`, and loads the
    session bucket through Rust `list_sessions`.
 
@@ -92,6 +92,30 @@ Native terminal appearance settings do not change the desktop renderer.
 Config commands do not accept launcher `--config` flags; the editor warns
 about that difference and never writes an overlay or project file.
 
+
+## Conversation forks
+
+`get_tree` supplies persisted entry IDs and the active leaf. `branches.ts`
+matches active-path user entries to transcript messages by role, timestamp and
+content, including attachments. Alternatives share their nearest preceding
+message entry; non-message metadata does not split that group. Nested forks
+remain separate. Traversals are iterative for long histories.
+
+Editing stays local until Save & fork. The store calls `navigate_tree` on the
+original user entry with summarization disabled; omp moves to its parent.
+Only a successful, non-cancelled navigation submits the edited prompt with the
+original images. Branch arrows navigate directly to a saved descendant leaf,
+preferring the current leaf for the active alternative and the newest tail
+for inactive alternatives. No new session file or local branch database is
+created. An unanswered user-only leaf follows omp's draft-restoration behavior.
+
+`branching` locks prompt submission and other session transitions. Branching
+also requires idle streaming, background work and queues. Generation and
+conversation-revision checks discard stale hydration/navigation results.
+After navigation the store clears branch-specific transient UI state and
+refreshes messages, tree and session state. Failed prompt submission restores
+the edited text and attachments to the composer. An unavailable tree API
+reports a warning and leaves edit/branch controls absent.
 
 ## Framing
 

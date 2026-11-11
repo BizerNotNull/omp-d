@@ -1,7 +1,9 @@
 import { beforeEach, expect, mock, test } from "bun:test";
+import type { AgentMessage, ImageContent, RpcCommand, SessionTree } from "../src/lib/omp/types";
 
 let starts: PromiseWithResolvers<{ cwd: string }>[] = [];
 let lists: { cwd: string; result: PromiseWithResolvers<{ path: string; title: string }[]> }[] = [];
+let send: (command: RpcCommand) => Promise<{ data?: unknown }> = async () => ({});
 mock.module("@tauri-apps/api/core", () => ({
   invoke: (command: string, args: { cwd: string }) => {
     if (command === "list_sessions") {
@@ -21,7 +23,7 @@ mock.module("../src/lib/omp/client", () => ({
       starts.push(result);
       return result.promise;
     },
-    send: async () => ({}),
+    send: (command: RpcCommand) => send(command),
   },
 }));
 Object.defineProperty(globalThis, "localStorage", {
@@ -37,6 +39,7 @@ const newSession = { path: "B/new.jsonl", title: "New folder" };
 beforeEach(() => {
   starts = [];
   lists = [];
+  send = async () => ({});
   store.setState(store.getInitialState(), true);
   store.setState({ cwd: "A", sessions: [oldSession], status: "ready" });
 });
@@ -84,4 +87,104 @@ test("a current list failure ends loading and reports the failure", async () => 
   await loading;
   expect(store.getState().sessionsLoading).toBe(false);
   expect(store.getState().notifications).toMatchObject([{ kind: "warning", message: "Session list failed: Access denied" }]);
+});
+
+function forkState() {
+  const image: ImageContent = { type: "image", mimeType: "image/png", data: "attachment" };
+  const original: AgentMessage = { role: "user", content: [{ type: "text", text: "original" }, image], timestamp: 1 };
+  const answer: AgentMessage = { role: "assistant", content: [{ type: "text", text: "original answer" }], timestamp: 2 };
+  const tree: SessionTree = {
+    tree: [{
+      entry: { type: "message", id: "user", parentId: null, timestamp: "2026-01-01T00:00:01Z", message: original },
+      children: [{
+        entry: { type: "message", id: "answer", parentId: "user", timestamp: "2026-01-01T00:00:02Z", message: answer },
+        children: [],
+      }],
+    }],
+    leafId: "answer",
+  };
+  store.setState({
+    messages: [original, answer],
+    sessionTree: tree,
+    messageBranches: [{ entryId: "user", alternatives: [{ entryId: "user", leafId: "answer" }], index: 0 }, undefined],
+  });
+  return { original, answer, image, tree };
+}
+
+test("a cancelled fork preserves the current conversation and never submits the edit", async () => {
+  const { original, answer } = forkState();
+  send = async (command) => {
+    if (command.type !== "navigate_tree") throw new Error("Cancelled navigation must not submit");
+    return { data: { cancelled: true } };
+  };
+  expect(await store.getState().forkMessage("user", "edited")).toBe(false);
+  expect(store.getState()).toMatchObject({ messages: [original, answer], branching: false, busy: false });
+  expect(store.getState().notifications).toMatchObject([{ kind: "warning", message: "Conversation branch change was cancelled." }]);
+});
+
+test("fork navigation locks submissions and preserves attachments on the new branch", async () => {
+  const { image, tree } = forkState();
+  const navigation = Promise.withResolvers<{ data: { cancelled: boolean } }>();
+  const edited: AgentMessage = { role: "user", content: [{ type: "text", text: "edited" }, image], timestamp: 3 };
+  tree.tree.push({
+    entry: { type: "message", id: "edited", parentId: null, timestamp: "2026-01-01T00:00:03Z", message: edited },
+    children: [],
+  });
+  let submitted: RpcCommand | undefined;
+  send = async (command) => {
+    if (command.type === "navigate_tree") return navigation.promise;
+    if (command.type === "prompt") {
+      submitted = command;
+      tree.leafId = "edited";
+      return { data: { agentInvoked: false } };
+    }
+    if (command.type === "get_messages") return { data: { messages: [edited] } };
+    if (command.type === "get_tree") return { data: tree };
+    return {};
+  };
+  const fork = store.getState().forkMessage("user", "edited");
+  expect(store.getState().branching).toBe(true);
+  expect(await store.getState().prompt("unrelated")).toBe(false);
+  expect(await store.getState().switchBranch("answer")).toBe(false);
+  expect(submitted).toBeUndefined();
+  navigation.resolve({ data: { cancelled: false } });
+  expect(await fork).toBe(true);
+  expect(submitted).toMatchObject({ type: "prompt", message: "edited", images: [image] });
+  expect(store.getState()).toMatchObject({ branching: false, messages: [edited] });
+  expect(store.getState().messageBranches[0]).toMatchObject({ entryId: "edited", index: 1 });
+});
+
+test("failed fork submission restores an editable draft with its attachments", async () => {
+  const { tree, image } = forkState();
+  send = async (command) => {
+    if (command.type === "navigate_tree") return { data: { cancelled: false } };
+    if (command.type === "prompt") throw new Error("Provider unavailable");
+    if (command.type === "get_messages") return { data: { messages: [] } };
+    if (command.type === "get_tree") return { data: { ...tree, leafId: null } };
+    return {};
+  };
+  expect(await store.getState().forkMessage("user", "retry this")).toBe(false);
+  expect(store.getState()).toMatchObject({
+    branching: false, busy: false, messages: [], editorText: "retry this", editorImages: [image],
+  });
+  expect(store.getState().notifications).toMatchObject([{ kind: "error", message: "Conversation branch failed: Provider unavailable" }]);
+});
+
+test("branch switching restores a saved tail without submitting another prompt", async () => {
+  const { tree, original, answer } = forkState();
+  const other: AgentMessage = { role: "user", content: "other", timestamp: 3 };
+  store.setState({
+    messages: [other],
+    messageBranches: [{ entryId: "other", alternatives: [{ entryId: "user", leafId: "answer" }, { entryId: "other", leafId: "other" }], index: 1 }],
+  });
+  send = async (command) => {
+    if (command.type === "prompt") throw new Error("Switching must not regenerate");
+    if (command.type === "navigate_tree") return { data: { cancelled: false } };
+    if (command.type === "get_messages") return { data: { messages: [original, answer] } };
+    if (command.type === "get_tree") return { data: tree };
+    return {};
+  };
+  expect(await store.getState().switchBranch("answer")).toBe(true);
+  expect(store.getState()).toMatchObject({ messages: [original, answer], branching: false });
+  expect(store.getState().messageBranches[0]?.entryId).toBe("user");
 });

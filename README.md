@@ -70,7 +70,7 @@ React UI  ──invoke / omp:// events──▶  Rust supervisor  ──stdin/st
 
 - `src-tauri/src/rpc_frame.rs` validates protocol-v2 chunk sequences and reassembles large frames.
 - `src-tauri/src/agent.rs` owns the child process, request stdin, stderr diagnostics, generation tagging, start/stop serialization, and an exit monitor that polls the direct child because tool subprocesses can keep stdout pipes open.
-- `src-tauri/src/sessions.rs` maps a cwd to Oh My Pi's session bucket and reads title-slot/header metadata for the recent-session list.
+- `src-tauri/src/sessions.rs` discovers the main checkout and linked worktrees, maps each directory to Oh My Pi's session bucket, and reads bounded metadata for the grouped recent-session list.
 - `src/lib/omp/client.ts` handles ready/process lifecycle, request correlation, and v2 negotiation.
 - `src/lib/omp/store.ts` projects RPC events into chat messages, streaming snapshots, tool runs, queues, dialogs, notices and session state.
 - `src/components/app/*` is the UI; `src/components/ui/*` is the shadcn Base UI set.

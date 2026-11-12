@@ -177,6 +177,15 @@ file, folds the fixed-width title slot into the header, keeps the first
 non-synthetic user message as preview, and hides untitled sessions with no
 prompt (matching the interactive picker).
 
+`list_sessions` discovers the main checkout and its linked worktrees through
+Git, then returns a `SessionListing` with a separate session list per directory.
+The sidebar keeps the main directory first and nests worktree directories with
+branch icons. Each directory keeps up to 40 sessions, newest first; non-Git
+folders retain a single directory group. Selecting a session in another
+directory first connects the agent in that workspace, then reopens the selected
+file with `switch_session`; the RPC runtime cannot rebind cwd through that
+command alone.
+
 - New session: `new_session`, then clear local transcript/dialog/session state
   and rehydrate.
 - Switch: `switch_session(sessionPath)`, same clearing, same rehydration.
@@ -187,6 +196,16 @@ prompt (matching the interactive picker).
 - Restart: `restart()` re-spawns via `connect`, then reopens the remembered
   `sessionFile` with `switch_session`, so the conversation survives settings
   changes, crashes and manual restarts.
+- Runtime relocation (`/wt`, `/move`): both `config_update` and local
+  `prompt_result` completion trigger reconciliation. State refreshes query the
+  bundled `/ompd-workspace` extension command without relying on session-file
+  path changes. It reports `sessionManager.getCwd()` through a reserved status
+  key, including for unpersisted empty sessions. Internal query IDs are excluded
+  from prompt-result handling to prevent recursive refreshes and changes to the
+  user's busy state. The store adopts that cwd without restarting the child or
+  clearing the conversation, persists it for restart, and refreshes directory-
+  scoped sessions, catalog, and Git status. The extension file lives for the
+  child process lifetime; generation filtering rejects old-process updates.
 
 ## Composer status
 

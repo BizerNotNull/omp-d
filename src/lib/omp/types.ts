@@ -512,6 +512,17 @@ export interface SessionSummary {
   size: number;
 }
 
+export interface SessionDirectory {
+  cwd: string;
+  isWorktree: boolean;
+  sessions: SessionSummary[];
+}
+
+export interface SessionListing {
+  repositoryCwd: string;
+  directories: SessionDirectory[];
+}
+
 export interface ProcessEvent {
   kind: "started" | "eof" | "exit" | "error" | "stopped";
   exitCode?: number | null;

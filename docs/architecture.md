@@ -93,6 +93,33 @@ Config commands do not accept launcher `--config` flags; the editor warns
 about that difference and never writes an overlay or project file.
 
 
+## Embedded terminal
+
+`AppShell` lazy-loads `TerminalPanel` on the first terminal toggle. Its workspace
+key unmounts all terminal views when the cwd changes. Hiding the panel or changing
+chat sessions leaves the xterm instances and shells alive. Closing a tab disposes
+its view and sends an idempotent native close.
+
+`src/lib/terminal/session.ts` creates a UUID and Tauri `Channel` before invoking
+`terminal_create`. Create, input, resize and close share an ordered per-session
+promise queue; teardown waits for a pending create to avoid orphaning a late
+spawn. `terminal.rs` owns the PTYs through `portable-pty`, with independent
+blocking reader, writer and child-wait workers. Input has a bounded queue;
+dimensions are validated before opening or resizing a PTY.
+
+Output uses raw byte arrays, preserving UTF-8 sequences split between PTY reads.
+xterm decodes those bytes and handles ANSI/control sequences; shell output never
+enters the chat Markdown renderer. The output worker sends the exit code after
+draining output. A `ResizeObserver` and FitAddon synchronize visible terminal
+geometry with the PTY; inactive tabs retain their previous size until shown.
+
+Windows shells belong to kill-on-close Job Objects. Unix cleanup signals
+descendants and shell/foreground process groups. Tab close, workspace replacement,
+channel loss and app exit terminate shells and reap their direct children.
+Terminals are independent of omp's RPC process and run with the user's normal
+permissions. Shell output is untrusted; no terminal-driven external-link or
+clipboard-write handlers are installed.
+
 ## Framing
 
 `rpc_frame.rs` implements the protocol-v2 decoder:

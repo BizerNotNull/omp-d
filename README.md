@@ -16,6 +16,7 @@ The app spawns a local `omp --mode rpc-ui` process and speaks its newline-delimi
 - Goal commands: `/goal <objective>` or `/goal set <objective>` starts a goal; `/goal` and `/goal show` display it; `/goal pause`, `/goal resume`, and `/goal drop` manage its lifecycle. The Activity rail shows its status and usage. Budget editing and `/guided-goal` require runtime RPC operations that are not currently available.
 - Extension UI dialogs for `select`, `confirm`, `input`, `editor` and `ask`, plus `notify`, status marks and widgets.
 - Activity rail with TODOs, running tools, context usage, spend and agent notices.
+- Embedded PTY terminal with shell tabs, scrollback, drag/keyboard resizing, maximize/restore, and `Ctrl+backtick` (`Cmd+backtick` on macOS). Hidden terminals keep running.
 - Native `/settings` editor: searchable catalog from the configured omp installation, native categories and enum choices, typed scalar/JSON editors, masked credentials, and per-setting global Save/Reset. Effective project/environment values are shown separately from global drafts. Desktop launch preferences remain in a separate tab.
 - Process supervision: v1/v2 RPC framing, chunk reassembly, crash detection, clean shutdown, and restart that preserves the current session.
 
@@ -60,6 +61,24 @@ the TUI, not the desktop renderer. Launcher `--config` overlays cannot be edited
 or included in queries through the native config CLI; the page warns when used.
 The Desktop & runtime tab retains binary, model, extra arguments, theme and
 process diagnostics.
+
+## Embedded terminal
+
+Click **Terminal** in the status bar or press `Ctrl+backtick` (`Cmd+backtick`
+on macOS). The first shell starts only when opened, in the active workspace.
+Windows uses `COMSPEC` (normally `cmd.exe`); Linux/macOS use `SHELL`, falling
+back to `/bin/sh`.
+
+Use **+** for independent shells and **×** to terminate a shell and its children.
+The down arrow hides the panel without stopping commands or clearing scrollback.
+Changing workspace or closing the app terminates its terminals; changing chat
+sessions does not. Exited tabs retain their output and exit code.
+
+Drag the top edge to resize. With that separator focused, use Up/Down
+(`Shift` for larger steps), Home or End. The maximize button fills the central
+workspace; restore returns to the previous height. Normal terminal input,
+including `Ctrl+C`, goes directly to the shell. Terminals run with your account's
+permissions, independently of the agent, and require the desktop app.
 
 ## Architecture
 

@@ -5,6 +5,7 @@ mod git_status;
 mod rpc_frame;
 mod sessions;
 mod settings;
+mod terminal;
 
 use agent::{AgentState, StartOptions};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -114,6 +115,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(AgentState::default())
         .manage(auth::AuthState::default())
+        .manage(terminal::TerminalState::default())
         .invoke_handler(tauri::generate_handler![
             start_agent,
             stop_agent,
@@ -128,6 +130,10 @@ pub fn run() {
             list_sessions,
             sessions_root,
             git_status,
+            terminal::terminal_create,
+            terminal::terminal_write,
+            terminal::terminal_resize,
+            terminal::terminal_close,
             initial_folder
         ])
         .build(tauri::generate_context!())
@@ -135,6 +141,7 @@ pub fn run() {
 
     app.run(|app_handle, event| {
         if let tauri::RunEvent::Exit = event {
+            terminal::shutdown(app_handle.state::<terminal::TerminalState>().inner());
             let state = app_handle.state::<AgentState>();
             tauri::async_runtime::block_on(async {
                 let _ = agent::stop(state.inner()).await;

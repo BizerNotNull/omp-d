@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- Embedded xterm.js terminal backed by native PTYs: workspace shells, persistent hidden tabs, resizable/maximizable bottom panel, keyboard toggle, exit status, and process-tree cleanup.
+
 ### Fixed
 - Keep `bun tauri dev` open during `/wt <branch>` by disabling native watcher auto-restarts; frontend hot reload remains enabled. Use `bunx tauri dev` to opt into native watching
 ## 0.1.0 — 2026-11-06

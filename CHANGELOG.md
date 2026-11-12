@@ -2,7 +2,16 @@
 
 ## Unreleased
 
+### Added
+- Edit sent user messages with a pencil and Save & fork in the current omp session, using its `/tree` navigation. The edited prompt is sent to the agent; original branches and image attachments remain available.
+- Per-message branch counters and previous/next arrows restore saved conversation tails in the same session without resubmitting prompts.
+- Group Recent Sessions under the main repository directory, with nested linked-worktree directories marked by a branch icon.
+
 ### Fixed
+- Follow the relocated session directory after `/wt` and `/move` without restarting the agent; refresh the workspace, recent sessions, model catalog, and Git status.
+- Reconcile the workspace when local slash commands finish, even when the observed session-file path is unchanged; keep internal workspace-query completions out of user turn state.
+- Display slash-command errors from `command_output` as error notifications and retain command output in Activity, including `/wt` branch-name conflicts.
+- Fix long-chat page/input freezes: load flat session entries instead of nested tree responses, and keep branch metadata loading independent of transcript hydration and composer controls.
 - Keep `bun tauri dev` open during `/wt <branch>` by disabling native watcher auto-restarts; frontend hot reload remains enabled. Use `bunx tauri dev` to opt into native watching
 ## 0.1.0 — 2026-11-06
 

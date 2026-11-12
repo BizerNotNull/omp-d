@@ -136,6 +136,37 @@ export interface CustomMessage {
 
 export type AgentMessage = UserMessage | DeveloperMessage | AssistantMessage | ToolResultMessage | CustomMessage;
 
+/** Persisted omp session entries; message IDs are distinct from streaming IDs. */
+export interface SessionTreeEntry {
+  id: string;
+  parentId: string | null;
+  type: string;
+  timestamp: string;
+  message?: AgentMessage;
+}
+
+/** Flat append history returned by get_entries, without wire-level tree nesting. */
+export interface SessionEntries {
+  entries: SessionTreeEntry[];
+  leafId: string | null;
+}
+
+export interface SessionTreeNode {
+  entry: SessionTreeEntry;
+  children: SessionTreeNode[];
+}
+
+export interface SessionTree {
+  tree: SessionTreeNode[];
+  leafId: string | null;
+}
+
+export interface NavigateTreeResult {
+  cancelled: boolean;
+  aborted?: boolean;
+  editorText?: string;
+}
+
 export interface TodoItem {
   content: string;
   status: "pending" | "in_progress" | "completed" | "blocked" | string;
@@ -479,6 +510,17 @@ export interface SessionSummary {
   preview?: string | null;
   modifiedMs: number;
   size: number;
+}
+
+export interface SessionDirectory {
+  cwd: string;
+  isWorktree: boolean;
+  sessions: SessionSummary[];
+}
+
+export interface SessionListing {
+  repositoryCwd: string;
+  directories: SessionDirectory[];
 }
 
 export interface ProcessEvent {

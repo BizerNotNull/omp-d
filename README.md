@@ -10,6 +10,7 @@ The app spawns a local `omp --mode rpc-ui` process and speaks its newline-delimi
 
 - Streaming chat with assistant text, thinking blocks, tool calls, ANSI-stripped terminal output, and edit diffs.
 - Session browser: resume/switch existing sessions, start new ones, rename, and reopen the active session after a restart or crash.
+- Message forks use omp's `/tree` mechanism in the current session file: the pencil edits a sent user message, and **Save & fork** sends that edited prompt to the running agent. Later prompts continue that branch normally. Original replies remain in the same session and can be restored with the arrows beside `1/3`; switching does not regenerate them. Cancel leaves history unchanged; attachments are retained. Editing and switching wait until the agent and its queues are idle.
 - Shared `/model` and `/models` page with providers on the left, configured roles and models on the right, model-kind filters, search, keyboard navigation, and live-session switching. Project/profile-scoped cached catalogs render immediately; CLI discovery refreshes in the background. Role queries use project/profile settings; `--config` role overlays are unsupported by the CLI and produce a visible warning.
 - Unauthenticated/unavailable providers remain visible below available providers. Their full registry catalogs can be browsed, but model selection stays disabled until credentials/configuration are ready and the catalog is refreshed.
 - Composer with Enter/Shift+Enter, steering and follow-up queues, queued-message chips, Esc abort, image paste, and slash-command autocomplete.
@@ -69,7 +70,7 @@ React UI  ──invoke / omp:// events──▶  Rust supervisor  ──stdin/st
 
 - `src-tauri/src/rpc_frame.rs` validates protocol-v2 chunk sequences and reassembles large frames.
 - `src-tauri/src/agent.rs` owns the child process, request stdin, stderr diagnostics, generation tagging, start/stop serialization, and an exit monitor that polls the direct child because tool subprocesses can keep stdout pipes open.
-- `src-tauri/src/sessions.rs` maps a cwd to Oh My Pi's session bucket and reads title-slot/header metadata for the recent-session list.
+- `src-tauri/src/sessions.rs` discovers the main checkout and linked worktrees, maps each directory to Oh My Pi's session bucket, and reads bounded metadata for the grouped recent-session list.
 - `src/lib/omp/client.ts` handles ready/process lifecycle, request correlation, and v2 negotiation.
 - `src/lib/omp/store.ts` projects RPC events into chat messages, streaming snapshots, tool runs, queues, dialogs, notices and session state.
 - `src/components/app/*` is the UI; `src/components/ui/*` is the shadcn Base UI set.
@@ -90,11 +91,13 @@ Protocol v1 is the baseline. The client negotiates v2 after `ready`, letting fra
 - One agent process per window. Session switching aborts an in-flight turn, as the RPC command does.
 - Image attachments are supported through paste; files are not attached through the picker yet.
 - The transcript is loaded in one `get_messages` response; extremely long sessions can take a moment to hydrate.
+- Tree navigation requires an omp version with `get_entries` and `navigate_tree`. Branch metadata loads separately and does not disable typing, sending or stopping the agent. As in omp's tree UI, selecting a branch that ended on an unanswered user message restores that prompt to the composer.
 
 ## Tests
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml
+bun test tests/branches.test.ts tests/store-sessions.test.ts
 bun run build
 ```
 

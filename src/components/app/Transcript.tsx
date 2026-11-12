@@ -1,5 +1,8 @@
-import { useState } from "react";
-import { Archive, Brain, ChevronDown, Scissors, Sparkles, SquareTerminal, User } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Archive, Brain, ChevronDown, ChevronLeft, ChevronRight, Pencil, Scissors, Sparkles, SquareTerminal, User } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import type { MessageBranch } from "@/lib/omp/branches";
 import type { AgentMessage, AssistantMessage, ThinkingContent, ToolCallContent, ToolResultMessage } from "@/lib/omp/types";
 import { useAppStore, type ToolRun } from "@/lib/omp/store";
 import {
@@ -25,7 +28,15 @@ function isAssistant(message: AgentMessage): message is AssistantMessage {
   return message.role === "assistant";
 }
 
-export function Transcript({
+export function Transcript(props: {
+  messages: AgentMessage[];
+  pending: Array<{ messageId: string; message: AgentMessage }>;
+}) {
+  const sessionId = useAppStore((state) => state.session?.sessionId);
+  return <SessionTranscript key={sessionId ?? "no-session"} {...props} />;
+}
+
+function SessionTranscript({
   messages,
   pending,
 }: {
@@ -33,6 +44,15 @@ export function Transcript({
   pending: Array<{ messageId: string; message: AgentMessage }>;
 }) {
   const toolRuns = useAppStore((state) => state.toolRuns);
+  const messageBranches = useAppStore((state) => state.messageBranches);
+  const busy = useAppStore((state) => state.busy);
+  const branching = useAppStore((state) => state.branching);
+  const treeLoading = useAppStore((state) => state.treeLoading);
+  const status = useAppStore((state) => state.status);
+  const pendingAsyncWork = useAppStore((state) => state.session?.hasPendingAsyncWork);
+  const queue = useAppStore((state) => state.queue);
+  const controlsDisabled = busy || branching || treeLoading || status !== "ready" || Boolean(pendingAsyncWork)
+    || queue.steering.length > 0 || queue.followUp.length > 0;
   const all = [...messages, ...pending.map((entry) => entry.message)];
 
   const results = new Map<string, ToolResultMessage>();
@@ -45,10 +65,11 @@ export function Transcript({
   }
 
   const items = all.map((message, index) => {
-    const key = `${index}:${message.role}:${typeof message.timestamp === "number" ? message.timestamp : ""}`;
+    const branch = index < messages.length ? messageBranches[index] : undefined;
+    const key = branch?.entryId ?? `${index}:${message.role}:${typeof message.timestamp === "number" ? message.timestamp : ""}`;
     if (message.role === "user" || message.role === "developer") {
       if (!isUserVisible(message)) return null;
-      return <UserBubble key={key} message={message} />;
+      return <UserBubble key={key} message={message} branch={branch} disabled={controlsDisabled} />;
     }
     if (isAssistant(message)) {
       const streaming = pending.some((entry) => entry.message === message);
@@ -70,10 +91,64 @@ export function Transcript({
   return <div className="flex flex-col gap-1">{items}</div>;
 }
 
-function UserBubble({ message }: { message: AgentMessage }) {
+function BranchControls({ branch, disabled }: { branch: MessageBranch; disabled: boolean }) {
+  const switchBranch = useAppStore((state) => state.switchBranch);
+  if (branch.alternatives.length < 2) return null;
+  return (
+    <div className="flex items-center gap-1 text-xs text-muted-foreground">
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        disabled={disabled || branch.index <= 0}
+        aria-label="Previous message branch"
+        title="Previous message branch"
+        onClick={() => void switchBranch(branch.alternatives[branch.index - 1].leafId)}
+      >
+        <ChevronLeft className="size-3.5" />
+      </Button>
+      <span aria-label={`Branch ${branch.index + 1} of ${branch.alternatives.length}`} className="tabular-nums">
+        {branch.index + 1}/{branch.alternatives.length}
+      </span>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        disabled={disabled || branch.index >= branch.alternatives.length - 1}
+        aria-label="Next message branch"
+        title="Next message branch"
+        onClick={() => void switchBranch(branch.alternatives[branch.index + 1].leafId)}
+      >
+        <ChevronRight className="size-3.5" />
+      </Button>
+    </div>
+  );
+}
+
+function UserBubble({ message, branch, disabled }: { message: AgentMessage; branch?: MessageBranch; disabled: boolean }) {
   const text = messagePlainText(message);
   const images = imageBlocks(message.content);
   const agentAttributed = message.attribution === "agent";
+  const editable = Boolean(branch) && message.role === "user" && !message.synthetic && !agentAttributed;
+  const forkMessage = useAppStore((state) => state.forkMessage);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(text);
+  const [saving, setSaving] = useState(false);
+  const editorRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (editing) editorRef.current?.focus();
+  }, [editing]);
+
+  async function save() {
+    if (!branch || disabled || saving) return;
+    setSaving(true);
+    try {
+      if (await forkMessage(branch.entryId, draft)) setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  }
   return (
     <div className="anim-in group ml-auto flex w-fit max-w-[85%] flex-col items-end gap-1.5 py-1.5">
       <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted-foreground/70">
@@ -92,11 +167,51 @@ function UserBubble({ message }: { message: AgentMessage }) {
           ))}
         </div>
       )}
-      {text && (
+      {editing ? (
+        <div className="flex w-full min-w-0 flex-col gap-2">
+          <Textarea
+            ref={editorRef}
+            aria-label="Edit user message"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            disabled={disabled || saving}
+            rows={3}
+            className="min-w-[min(24rem,65vw)] resize-y text-[13.5px]"
+          />
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="ghost" size="sm" disabled={saving} onClick={() => setEditing(false)}>
+              Cancel
+            </Button>
+            <Button type="button" size="sm" disabled={disabled || saving || !draft.trim()} onClick={() => void save()}>
+              Save &amp; fork
+            </Button>
+          </div>
+        </div>
+      ) : text ? (
         <div className="rounded-2xl rounded-tr-md border border-border/70 bg-secondary/70 px-3.5 py-2.5 text-[13.5px] leading-relaxed text-secondary-foreground shadow-sm">
           <div className="break-words whitespace-pre-wrap">{text}</div>
         </div>
-      )}
+      ) : null}
+      <div className="flex items-center gap-1">
+        {editable && !editing && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            disabled={disabled || saving}
+            aria-label="Edit message and fork"
+            title="Edit message and fork"
+            className="text-muted-foreground"
+            onClick={() => {
+              setDraft(text);
+              setEditing(true);
+            }}
+          >
+            <Pencil className="size-3.5" />
+          </Button>
+        )}
+        {branch && <BranchControls branch={branch} disabled={disabled || saving} />}
+      </div>
     </div>
   );
 }

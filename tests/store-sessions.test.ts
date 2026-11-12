@@ -1,13 +1,13 @@
 import { beforeEach, expect, mock, test } from "bun:test";
-import type { AgentMessage, ImageContent, RpcCommand, SessionEntries, SessionTree } from "../src/lib/omp/types";
+import type { AgentMessage, ImageContent, RpcCommand, SessionEntries, SessionListing, SessionTree } from "../src/lib/omp/types";
 
 let starts: PromiseWithResolvers<{ cwd: string }>[] = [];
-let lists: { cwd: string; result: PromiseWithResolvers<{ path: string; title: string }[]> }[] = [];
+let lists: { cwd: string; result: PromiseWithResolvers<SessionListing> }[] = [];
 let send: (command: RpcCommand) => Promise<{ data?: unknown }> = async () => ({});
 mock.module("@tauri-apps/api/core", () => ({
   invoke: (command: string, args: { cwd: string }) => {
     if (command === "list_sessions") {
-      const result = Promise.withResolvers<{ path: string; title: string }[]>();
+      const result = Promise.withResolvers<SessionListing>();
       lists.push({ cwd: args.cwd, result });
       return result.promise;
     }
@@ -33,31 +33,37 @@ Object.defineProperty(globalThis, "localStorage", {
 Object.assign(globalThis, { document: { title: "" }, window: { setTimeout: () => 0 } });
 // Import after installing transport mocks and globals required at module initialization.
 const { useAppStore: store } = await import("../src/lib/omp/store");
-const oldSession = { path: "A/old.jsonl", title: "Old folder" };
-const newSession = { path: "B/new.jsonl", title: "New folder" };
+const oldListing: SessionListing = {
+  repositoryCwd: "A",
+  directories: [{ cwd: "A", isWorktree: false, sessions: [{ path: "A/old.jsonl", sessionId: "old", cwd: "A", title: "Old folder", modifiedMs: 1, size: 1 }] }],
+};
+const newListing: SessionListing = {
+  repositoryCwd: "B",
+  directories: [{ cwd: "B", isWorktree: false, sessions: [{ path: "B/new.jsonl", sessionId: "new", cwd: "B", title: "New folder", modifiedMs: 2, size: 1 }] }],
+};
 
 beforeEach(() => {
   starts = [];
   lists = [];
   send = async () => ({});
   store.setState(store.getInitialState(), true);
-  store.setState({ cwd: "A", sessions: [oldSession], status: "ready" });
+  store.setState({ cwd: "A", sessionListing: oldListing, status: "ready" });
 });
 
 test("switching clears old sessions during startup and ignores an old folder response", async () => {
   const oldLoad = store.getState().loadSessions();
   const connecting = store.getState().connect("B");
-  expect(store.getState()).toMatchObject({ cwd: "B", sessions: [], sessionsLoading: true });
-  lists[0].result.resolve([oldSession]);
+  expect(store.getState()).toMatchObject({ cwd: "B", sessionListing: undefined, sessionsLoading: true });
+  lists[0].result.resolve(oldListing);
   await oldLoad;
-  expect(store.getState()).toMatchObject({ sessions: [], sessionsLoading: true });
+  expect(store.getState()).toMatchObject({ sessionListing: undefined, sessionsLoading: true });
 
   starts[0].resolve({ cwd: "B" });
   while (lists.length < 2) await Promise.resolve();
   expect(lists[1].cwd).toBe("B");
-  lists[1].result.resolve([newSession]);
+  lists[1].result.resolve(newListing);
   await connecting;
-  expect(store.getState()).toMatchObject({ sessions: [newSession], sessionsLoading: false });
+  expect(store.getState()).toMatchObject({ sessionListing: newListing, sessionsLoading: false });
 });
 
 test("an obsolete folder failure cannot clear loading or show a warning", async () => {
@@ -65,20 +71,20 @@ test("an obsolete folder failure cannot clear loading or show a warning", async 
   const connecting = store.getState().connect("B");
   lists[0].result.reject(new Error("Old folder failed"));
   await oldLoad;
-  expect(store.getState()).toMatchObject({ sessions: [], sessionsLoading: true, notifications: [] });
+  expect(store.getState()).toMatchObject({ sessionListing: undefined, sessionsLoading: true, notifications: [] });
   starts[0].reject(new Error("Agent failed"));
   await connecting;
-  expect(store.getState()).toMatchObject({ status: "error", sessions: [], sessionsLoading: false });
+  expect(store.getState()).toMatchObject({ status: "error", sessionListing: undefined, sessionsLoading: false });
 });
 
 test("the latest list request wins even when older requests finish last", async () => {
   const older = store.getState().loadSessions();
   const newer = store.getState().loadSessions();
-  lists[1].result.resolve([newSession]);
+  lists[1].result.resolve(newListing);
   await newer;
-  lists[0].result.resolve([oldSession]);
+  lists[0].result.resolve(oldListing);
   await older;
-  expect(store.getState()).toMatchObject({ sessions: [newSession], sessionsLoading: false });
+  expect(store.getState()).toMatchObject({ sessionListing: newListing, sessionsLoading: false });
 });
 
 test("a current list failure ends loading and reports the failure", async () => {
@@ -89,6 +95,89 @@ test("a current list failure ends loading and reports the failure", async () => 
   expect(store.getState().notifications).toMatchObject([{ kind: "warning", message: "Session list failed: Access denied" }]);
 });
 
+test("selecting a worktree session starts its workspace before reopening the session", async () => {
+  const targetPath = newListing.directories[0].sessions[0].path;
+  store.setState({
+    sessionListing: { repositoryCwd: "A", directories: [...oldListing.directories, { ...newListing.directories[0], isWorktree: true }] },
+  });
+  const switches: { cwd: string | undefined; path: unknown }[] = [];
+  send = async (command) => {
+    if (command.type === "switch_session") switches.push({ cwd: store.getState().cwd, path: command.sessionPath });
+    return {};
+  };
+  const switching = store.getState().switchSession(targetPath);
+  expect(store.getState().cwd).toBe("B");
+  expect(switches).toEqual([]);
+  starts[0].resolve({ cwd: "B" });
+  while (lists.length < 1) await Promise.resolve();
+  lists[0].result.resolve(newListing);
+  while (lists.length < 2) await Promise.resolve();
+  lists[1].result.resolve(newListing);
+  await switching;
+  expect(switches).toEqual([{ cwd: "B", path: targetPath }]);
+  expect(store.getState().sessionListing).toEqual(newListing);
+});
+
+test("local command completion reconciles cwd even when the session file is unchanged", async () => {
+  const messages: AgentMessage[] = [
+    { role: "user", content: [{ type: "text", text: "keep this conversation" }], timestamp: 1 },
+  ];
+  const session = { sessionFile: "A/old.jsonl", sessionId: "same-session", isStreaming: false };
+  let runtimeCwd = "A";
+  send = async (command) => {
+    if (command.type === "get_state") return { data: session };
+    if (command.type === "get_messages") return { data: { messages } };
+    if (command.type === "prompt" && command.message === "/ompd-workspace") {
+      store.getState().applyFrame({
+        type: "extension_ui_request", method: "setStatus",
+        statusKey: "ompd:workspace", statusText: runtimeCwd,
+      });
+      store.getState().applyFrame({
+        type: "prompt_result", id: command.id, agentInvoked: false,
+        status: "completed", sessionSettled: true,
+      });
+    }
+    return {};
+  };
+  await store.getState().refreshAll();
+  runtimeCwd = "B";
+  store.getState().applyFrame({
+    type: "prompt_result", id: "user-wt", agentInvoked: false,
+    status: "completed", sessionSettled: true,
+  });
+  await store.getState().refreshAll();
+  expect(store.getState().cwd).toBe("B");
+  expect(store.getState().session?.sessionId).toBe("same-session");
+  expect(store.getState().messages).toEqual(messages);
+  expect(starts).toEqual([]);
+  for (const list of lists) list.result.resolve(list.cwd === "A" ? oldListing : newListing);
+});
+
+test("an internal workspace query completion cannot stop an active agent turn", () => {
+  store.setState({ busy: true });
+  store.getState().applyFrame({
+    type: "prompt_result", id: "ompd-workspace-123", agentInvoked: false,
+    status: "completed", sessionSettled: true,
+  });
+  expect(store.getState().busy).toBe(true);
+  expect(lists).toEqual([]);
+});
+
+test("slash command errors are visible without changing the current workspace", () => {
+  const output = "Worktree creation failed: Branch 'test' already exists; pick another name.";
+  const message = `Error: ${output}`;
+  store.getState().applyFrame({ type: "command_output", text: output });
+  expect(store.getState().notifications).toMatchObject([{ kind: "error", message }]);
+  expect(store.getState().notices).toMatchObject([{ kind: "error", message }]);
+  expect(store.getState().cwd).toBe("A");
+  expect(store.getState().sessionListing).toEqual(oldListing);
+});
+
+test("informational command output is retained without an error notification", () => {
+  store.getState().applyFrame({ type: "command_output", text: "Moved to worktree B on branch feature." });
+  expect(store.getState().notifications).toEqual([]);
+  expect(store.getState().notices).toMatchObject([{ kind: "info", message: "Moved to worktree B on branch feature." }]);
+});
 function forkState() {
   const image: ImageContent = { type: "image", mimeType: "image/png", data: "attachment" };
   const original: AgentMessage = { role: "user", content: [{ type: "text", text: "original" }, image], timestamp: 1 };

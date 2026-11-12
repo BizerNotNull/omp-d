@@ -17,6 +17,7 @@ The app spawns a local `omp --mode rpc-ui` process and speaks its newline-delimi
 - Goal commands: `/goal <objective>` or `/goal set <objective>` starts a goal; `/goal` and `/goal show` display it; `/goal pause`, `/goal resume`, and `/goal drop` manage its lifecycle. The Activity rail shows its status and usage. Budget editing and `/guided-goal` require runtime RPC operations that are not currently available.
 - Extension UI dialogs for `select`, `confirm`, `input`, `editor` and `ask`, plus `notify`, status marks and widgets.
 - Activity rail with TODOs, running tools, context usage, spend and agent notices.
+- Embedded PTY terminal with shell tabs, scrollback, drag/keyboard resizing, maximize/restore, and `Ctrl+backtick` (`Cmd+backtick` on macOS). Hidden terminals keep running.
 - Native `/settings` editor: searchable catalog from the configured omp installation, native categories and enum choices, typed scalar/JSON editors, masked credentials, and per-setting global Save/Reset. Effective project/environment values are shown separately from global drafts. Desktop launch preferences remain in a separate tab.
 - Process supervision: v1/v2 RPC framing, chunk reassembly, crash detection, clean shutdown, and restart that preserves the current session.
 
@@ -62,6 +63,24 @@ or included in queries through the native config CLI; the page warns when used.
 The Desktop & runtime tab retains binary, model, extra arguments, theme and
 process diagnostics.
 
+## Embedded terminal
+
+Click **Terminal** in the status bar or press `Ctrl+backtick` (`Cmd+backtick`
+on macOS). The first shell starts only when opened, in the active workspace.
+Windows uses `COMSPEC` (normally `cmd.exe`); Linux/macOS use `SHELL`, falling
+back to `/bin/sh`.
+
+Use **+** for independent shells and **×** to terminate a shell and its children.
+The down arrow hides the panel without stopping commands or clearing scrollback.
+Changing workspace or closing the app terminates its terminals; changing chat
+sessions does not. Exited tabs retain their output and exit code.
+
+Drag the top edge to resize. With that separator focused, use Up/Down
+(`Shift` for larger steps), Home or End. The maximize button fills the central
+workspace; restore returns to the previous height. Normal terminal input,
+including `Ctrl+C`, goes directly to the shell. Terminals run with your account's
+permissions, independently of the agent, and require the desktop app.
+
 ## Architecture
 
 ```
@@ -70,7 +89,7 @@ React UI  ──invoke / omp:// events──▶  Rust supervisor  ──stdin/st
 
 - `src-tauri/src/rpc_frame.rs` validates protocol-v2 chunk sequences and reassembles large frames.
 - `src-tauri/src/agent.rs` owns the child process, request stdin, stderr diagnostics, generation tagging, start/stop serialization, and an exit monitor that polls the direct child because tool subprocesses can keep stdout pipes open.
-- `src-tauri/src/sessions.rs` maps a cwd to Oh My Pi's session bucket and reads title-slot/header metadata for the recent-session list.
+- `src-tauri/src/sessions.rs` discovers the main checkout and linked worktrees, maps each directory to Oh My Pi's session bucket, and reads bounded metadata for the grouped recent-session list.
 - `src/lib/omp/client.ts` handles ready/process lifecycle, request correlation, and v2 negotiation.
 - `src/lib/omp/store.ts` projects RPC events into chat messages, streaming snapshots, tool runs, queues, dialogs, notices and session state.
 - `src/components/app/*` is the UI; `src/components/ui/*` is the shadcn Base UI set.

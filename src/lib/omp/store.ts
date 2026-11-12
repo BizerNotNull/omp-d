@@ -20,7 +20,7 @@ import type {
   RpcFrame,
   RpcSessionState,
   SessionStats,
-  SessionSummary,
+  SessionListing,
   SessionTree,
   SessionEntries,
   StartInfo,
@@ -129,7 +129,7 @@ interface AppState {
   modelsLoading: boolean;
   modelsError?: string;
 
-  sessions: SessionSummary[];
+  sessionListing?: SessionListing;
   sessionsLoading: boolean;
 
   dialogs: DialogRequest[];
@@ -192,6 +192,7 @@ let gitRefreshKey: string | undefined;
 let conversationRevision = 0;
 let treeRequest = 0;
 let treeWarningGeneration: number | undefined;
+let workspaceQuerySeq = 0;
 
 function messageKey(message: AgentMessage): string {
   const timestamp = typeof message.timestamp === "number" ? message.timestamp : 0;
@@ -240,7 +241,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   thinkingLevels: [],
   modelsLoading: false,
   modelRoles: {},
-  sessions: [],
+  sessionListing: undefined,
   sessionsLoading: false,
 
   dialogs: [],
@@ -283,7 +284,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
       ...cachedCatalog,
       modelsLoading: false,
       modelsError: undefined,
-      sessions: [],
+      sessionListing: undefined,
       sessionsLoading: true,
       messages: withMessageKeys([]).messages,
       messageKeys: new Set<string>(),
@@ -389,6 +390,10 @@ export const useAppStore = create<AppState>()((set, get) => ({
       if (omp.generation !== generation || revision !== conversationRevision) return;
       const session = state?.data;
       const transcript = messages?.data?.messages;
+      if (session) {
+        await syncSessionWorkspace(set, () => omp.generation === generation && revision === conversationRevision);
+        if (omp.generation !== generation || revision !== conversationRevision) return;
+      }
       set((current) => ({
         session: session ?? current.session,
         stats: stats?.data ?? current.stats,
@@ -468,10 +473,16 @@ export const useAppStore = create<AppState>()((set, get) => ({
   },
 
   refreshState: async () => {
+    const generation = omp.generation;
+    const revision = conversationRevision;
     try {
       const res = await omp.send<RpcSessionState>({ type: "get_state" });
       if (!res.data) return;
       const session = res.data;
+      const current = () => omp.generation === generation && revision === conversationRevision;
+      if (!current()) return;
+      await syncSessionWorkspace(set, current);
+      if (!current()) return;
       document.title = session.sessionName ? `${stripPrivateUse(session.sessionName)} — omp-d` : "omp-d — Oh My Pi";
       set((state) => ({
         session,
@@ -522,9 +533,9 @@ export const useAppStore = create<AppState>()((set, get) => ({
     const request = ++sessionsRequest;
     set({ sessionsLoading: true });
     try {
-      const sessions = await invoke<SessionSummary[]>("list_sessions", { cwd, limit: 40 });
+      const sessionListing = await invoke<SessionListing>("list_sessions", { cwd, limit: 40 });
       if (request !== sessionsRequest) return;
-      set({ sessions, sessionsLoading: false });
+      set({ sessionListing, sessionsLoading: false });
     } catch (error) {
       if (request !== sessionsRequest) return;
       set({ sessionsLoading: false });
@@ -678,6 +689,11 @@ export const useAppStore = create<AppState>()((set, get) => ({
   switchSession: async (path) => {
     if (get().branching) return;
     try {
+      const directory = get().sessionListing?.directories.find((entry) => entry.sessions.some((session) => session.path === path));
+      if (directory && directory.cwd !== get().cwd) {
+        await get().connect(directory.cwd);
+        if (get().status !== "ready" || get().cwd !== directory.cwd) return;
+      }
       const res = await omp.send<{ cancelled: boolean }>({ type: "switch_session", sessionPath: path });
       if (res.data?.cancelled) {
         pushToast(set, "warning", "Session switch was cancelled.");
@@ -853,6 +869,17 @@ export const useAppStore = create<AppState>()((set, get) => ({
           },
         });
         return;
+      case "command_output": {
+        const text = typeof frame.text === "string" ? frame.text.trim() : "";
+        if (!text) return;
+        // Some runtime versions emit a plain "… failed:" message instead
+        // of the conventional "Error:" prefix.
+        const isError = /^(?:Error:\s|[^:\r\n]*\bfailed:\s)/i.test(text);
+        const message = isError && !/^Error:\s/i.test(text) ? `Error: ${text}` : text;
+        pushNotice(set, isError ? "error" : "info", message);
+        if (isError) pushToast(set, "error", message);
+        return;
+      }
       case "notice": {
         const level = (frame.level as string) ?? "info";
         const raw = String(frame.message ?? "").replace(/\s+/g, " ").trim();
@@ -866,6 +893,9 @@ export const useAppStore = create<AppState>()((set, get) => ({
       }
       case "prompt_result": {
         const result = frame as unknown as PromptResultFrame;
+        // Internal workspace queries are local prompts too; they must not
+        // recursively refresh the session or change the user's busy state.
+        if (result.id?.startsWith("ompd-workspace-")) return;
         if (result.status === "error") {
           pushToast(set, "error", result.error?.message ?? "The prompt failed.");
         } else if (result.status === "aborted") {
@@ -873,12 +903,19 @@ export const useAppStore = create<AppState>()((set, get) => ({
         }
         if (result.error?.message) pushNotice(set, "error", result.error.message);
         if (result.sessionSettled) set({ busy: false });
+        if (!result.agentInvoked) {
+          void get().refreshAll();
+          void get().loadSessions();
+        }
         return;
       }
       case "session_settled":
         set({ busy: false });
         void get().refreshAll();
         void get().loadSessions();
+        return;
+      case "config_update":
+        void get().refreshAll();
         return;
       case "model_changed":
       case "thinking_level_changed":
@@ -968,6 +1005,20 @@ export const useAppStore = create<AppState>()((set, get) => ({
 
 type SetState = (partial: Partial<AppState> | ((state: AppState) => Partial<AppState>)) => void;
 
+async function syncSessionWorkspace(
+  set: SetState,
+  current: () => boolean,
+) {
+  try {
+    await omp.send({
+      type: "prompt",
+      id: `ompd-workspace-${++workspaceQuerySeq}`,
+      message: "/ompd-workspace",
+    });
+  } catch (error) {
+    if (current()) pushToast(set, "warning", `Workspace refresh failed: ${describeError(error)}`);
+  }
+}
 async function navigateConversation(
   set: SetState,
   get: () => AppState,
@@ -1101,6 +1152,27 @@ function handleExtensionRequest(request: ExtensionUIRequest, set: SetState, get:
       return;
     }
     case "setStatus": {
+      if (request.statusKey === "ompd:workspace") {
+        const cwd = request.statusText;
+        if (!cwd || cwd === get().cwd) return;
+        ++sessionsRequest;
+        ++catalogRequest;
+        localStorage.setItem(LAST_CWD_KEY, cwd);
+        set({
+          cwd,
+          sessionListing: undefined,
+          sessionsLoading: false,
+          gitStatus: undefined,
+          gitStatusError: undefined,
+          ...readCatalog(catalogCacheKey(cwd, get().preferences)),
+          modelsLoading: false,
+          modelsError: undefined,
+        });
+        void get().loadSessions();
+        void get().fetchModels();
+        void get().refreshGitStatus();
+        return;
+      }
       set((state) => {
         const statusMarks = { ...state.statusMarks };
         if (request.statusText) statusMarks[request.statusKey] = request.statusText;

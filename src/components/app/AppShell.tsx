@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
@@ -15,6 +15,8 @@ import { SettingsDialog } from "./SettingsDialog";
 import { splitExtraArgs } from "@/lib/omp/model-catalog";
 import { useAppStore } from "@/lib/omp/store";
 
+const TerminalPanel = lazy(() => import("./TerminalPanel").then((module) => ({ default: module.TerminalPanel })));
+
 export function AppShell() {
   const bootstrap = useAppStore((state) => state.bootstrap);
   const cwd = useAppStore((state) => state.cwd);
@@ -24,6 +26,15 @@ export function AppShell() {
   const [loginProvider, setLoginProvider] = useState<string>();
   const preferences = useAppStore((state) => state.preferences);
   const [panelOpen, setPanelOpen] = useState(true);
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalWorkspace, setTerminalWorkspace] = useState<string>();
+  const terminalVisible = terminalOpen && terminalWorkspace === cwd;
+
+  function toggleTerminal() {
+    if (!cwd) return;
+    setTerminalWorkspace(cwd);
+    setTerminalOpen(!terminalVisible);
+  }
 
   useEffect(() => {
     void bootstrap();
@@ -39,11 +50,17 @@ export function AppShell() {
       if ((event.metaKey || event.ctrlKey) && event.key === ",") {
         event.preventDefault();
         setSettingsOpen(true);
+      } else if ((event.ctrlKey || event.metaKey) && event.code === "Backquote" && !event.altKey) {
+        event.preventDefault();
+        if (cwd) {
+          setTerminalWorkspace(cwd);
+          setTerminalOpen((open) => terminalWorkspace !== cwd || !open);
+        }
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [cwd, terminalWorkspace]);
 
   if (!cwd) {
     return (
@@ -62,7 +79,7 @@ export function AppShell() {
       <div className="flex h-full w-full flex-col bg-background text-foreground">
         <div className="flex min-h-0 flex-1">
           {!modelsOpen && <Sidebar onOpenSettings={() => setSettingsOpen(true)} />}
-          <main className="flex min-w-0 flex-1 flex-col">
+          <main className="relative flex min-w-0 flex-1 flex-col">
             {!modelsOpen && <TopBar
               onOpenModels={() => setModelsOpen(true)}
               onOpenSettings={() => setSettingsOpen(true)}
@@ -71,14 +88,19 @@ export function AppShell() {
             />}
             {modelsOpen && <div className={loginProvider ? "hidden" : "flex min-h-0 flex-1 flex-col"}><ModelPicker active={!loginProvider} onClose={() => setModelsOpen(false)} onLoginRequest={setLoginProvider} /></div>}
             {modelsOpen && loginProvider && <ProviderLogin key={`${cwd}:${loginProvider}`} provider={loginProvider} options={{ cwd, binary: preferences.binary.trim() || "omp", extraArgs: splitExtraArgs(preferences.extraArgs) }} onBack={() => setLoginProvider(undefined)} onSuccess={() => { setLoginProvider(undefined); void useAppStore.getState().fetchModels(); }} />}
-            <div className={modelsOpen ? "hidden" : "flex min-h-0 flex-1 flex-col"}>
+            <div className={modelsOpen ? "hidden" : "flex min-h-0 flex-1 flex-col overflow-hidden"}>
               <ChatView />
               <Composer active={!modelsOpen && !settingsOpen} onOpenModels={() => setModelsOpen(true)} onOpenSettings={() => setSettingsOpen(true)} />
             </div>
+            {terminalWorkspace === cwd && (
+              <Suspense fallback={terminalVisible ? <div role="status" className="border-t p-3 text-xs text-muted-foreground">Loading terminal…</div> : null}>
+                <TerminalPanel key={cwd} cwd={cwd} open={terminalVisible && !modelsOpen} onHide={() => setTerminalOpen(false)} />
+              </Suspense>
+            )}
           </main>
           {panelOpen && !modelsOpen && <RightPanel />}
         </div>
-        <StatusBar />
+        <StatusBar terminalOpen={terminalVisible} onToggleTerminal={toggleTerminal} />
         <ExtensionDialogs />
         <Toasts />
         <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />

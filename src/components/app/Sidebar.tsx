@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import {
   FolderOpen,
+  GitBranch,
   LoaderCircle,
   MessageSquarePlus,
   Plus,
@@ -16,7 +17,7 @@ import { formatRelativeTime, stripPrivateUse } from "@/lib/omp/format";
 export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const cwd = useAppStore((state) => state.cwd);
   const status = useAppStore((state) => state.status);
-  const sessions = useAppStore((state) => state.sessions);
+  const sessionListing = useAppStore((state) => state.sessionListing);
   const sessionsLoading = useAppStore((state) => state.sessionsLoading);
   const session = useAppStore((state) => state.session);
   const startInfo = useAppStore((state) => state.startInfo);
@@ -32,9 +33,10 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   }, [cwd]);
 
   const activePath = session?.sessionFile;
+  const sessionCount = sessionListing?.directories.reduce((count, directory) => count + directory.sessions.length, 0) ?? 0;
 
   return (
-    <aside className="flex w-[264px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
+    <aside className="flex w-[264px] min-w-0 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
       <div className="flex items-center gap-2.5 px-3.5 py-3">
         <div className="relative flex size-8 items-center justify-center rounded-lg border border-sidebar-border bg-sidebar-accent text-[15px] font-semibold">
           π
@@ -90,56 +92,93 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       </div>
 
       <div className="mt-4 flex items-center justify-between px-4 pb-1.5">
-        <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">Recent</span>
-        <span className="text-[10px] text-muted-foreground/50">{sessions.length}</span>
+        <h2 className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">Recent</h2>
+        <span className="text-[10px] text-muted-foreground/50">{sessionCount}</span>
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
-        <div className="space-y-0.5 px-2 pb-3">
-          {sessionsLoading && sessions.length === 0 && (
+        <div className="min-w-0 px-2 pb-3">
+          {sessionsLoading && !sessionListing && (
             <div role="status" className="px-2 py-6 text-center text-[11px] text-muted-foreground">
               Loading sessions…
             </div>
           )}
-          {sessions.length === 0 && !sessionsLoading && (
+          {!sessionListing && !sessionsLoading && (
             <div className="px-2 py-6 text-center text-[11px] text-muted-foreground">
               <MessageSquarePlus className="mx-auto mb-2 size-5 opacity-40" />
               {status === "ready" ? "No saved sessions in this folder yet." : "Waiting for the agent…"}
             </div>
           )}
-          {sessions.map((item) => {
-            const cleanTitle = stripPrivateUse(item.title ?? "").trim();
-            const cleanPreview = stripPrivateUse(item.preview ?? "").trim();
-            const title = cleanTitle || cleanPreview || "Untitled session";
-            const subtitle = cleanTitle && cleanPreview && cleanPreview !== cleanTitle ? cleanPreview : "";
-            const current = Boolean(activePath && item.path === activePath);
-            return (
-              <button
-                key={item.path}
-                type="button"
-                onClick={() => void switchSession(item.path)}
-                className={cn(
-                  "group flex w-full flex-col gap-0.5 rounded-lg px-2.5 py-2 text-left transition-colors",
-                  current ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60",
-                )}
+          {sessionListing && (
+            <section aria-label={sessionListing.repositoryCwd} className="min-w-0">
+              <h3
+                title={sessionListing.repositoryCwd}
+                className="flex min-w-0 items-center gap-1.5 px-2 py-1.5 text-[11px] font-medium"
               >
-                <div className="flex items-center gap-1.5">
-                  {current && <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" />}
-                  <span className={cn("truncate text-[12px]", current ? "font-medium" : "text-sidebar-foreground/85")}>
-                    {title}
-                  </span>
-                  <span className="ml-auto shrink-0 text-[9px] text-muted-foreground/60">
-                    {formatRelativeTime(item.modifiedMs)}
-                  </span>
-                </div>
-                {subtitle && (
-                  <span className="truncate text-[10px] text-muted-foreground/70 group-hover:text-muted-foreground">
-                    {subtitle}
-                  </span>
-                )}
-              </button>
-            );
-          })}
+                <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 truncate">{directoryName(sessionListing.repositoryCwd)}</span>
+              </h3>
+              {sessionListing.directories.map((directory) => (
+                <section
+                  key={directory.cwd}
+                  aria-label={directory.cwd}
+                  className={cn("ml-3 min-w-0", directory.cwd !== sessionListing.repositoryCwd && "mt-1")}
+                >
+                  {directory.cwd !== sessionListing.repositoryCwd && (
+                    <h4
+                      title={directory.cwd}
+                      className="flex min-w-0 items-center gap-1.5 px-2 py-1.5 text-[11px] font-medium"
+                    >
+                      {directory.isWorktree
+                        ? <GitBranch aria-label="Worktree" className="size-3.5 shrink-0 text-muted-foreground" />
+                        : <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />}
+                      <span className="min-w-0 truncate">{directoryName(directory.cwd)}</span>
+                    </h4>
+                  )}
+                  <div className={cn("min-w-0 space-y-0.5", directory.cwd !== sessionListing.repositoryCwd && "ml-3")}>
+                    {directory.sessions.length === 0 && (
+                      <p className="px-2.5 py-2 text-[11px] text-muted-foreground">
+                        No saved sessions in this folder yet.
+                      </p>
+                    )}
+                    {directory.sessions.map((item) => {
+                      const cleanTitle = stripPrivateUse(item.title ?? "").trim();
+                      const cleanPreview = stripPrivateUse(item.preview ?? "").trim();
+                      const title = cleanTitle || cleanPreview || "Untitled session";
+                      const subtitle = cleanTitle && cleanPreview && cleanPreview !== cleanTitle ? cleanPreview : "";
+                      const current = Boolean(activePath && item.path === activePath);
+                      return (
+                        <button
+                          key={item.path}
+                          type="button"
+                          onClick={() => void switchSession(item.path)}
+                          className={cn(
+                            "group flex w-full min-w-0 flex-col gap-0.5 rounded-lg px-2.5 py-2 text-left transition-colors",
+                            current ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60",
+                          )}
+                        >
+                          <div className="flex w-full min-w-0 items-center gap-1.5">
+                            {current && <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" />}
+                            <span className={cn("min-w-0 flex-1 truncate text-[12px]", current ? "font-medium" : "text-sidebar-foreground/85")}>
+                              {title}
+                            </span>
+                            <span className="ml-auto shrink-0 text-[9px] text-muted-foreground/60">
+                              {formatRelativeTime(item.modifiedMs)}
+                            </span>
+                          </div>
+                          {subtitle && (
+                            <span className="w-full min-w-0 truncate text-[10px] text-muted-foreground/70 group-hover:text-muted-foreground">
+                              {subtitle}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              ))}
+            </section>
+          )}
         </div>
       </ScrollArea>
 
@@ -152,6 +191,11 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       </div>
     </aside>
   );
+}
+
+function directoryName(path: string): string {
+  const parts = path.replace(/\\/g, "/").split("/").filter(Boolean);
+  return parts[parts.length - 1] ?? path;
 }
 
 function statusTone(status: string): string {

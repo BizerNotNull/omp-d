@@ -37,6 +37,7 @@ pub struct AgentHandle {
     pub child: Arc<Mutex<Child>>,
     pub stdin: Option<ChildStdin>,
     pub pid: u32,
+    _workspace_extension: WorkspaceExtension,
 }
 
 #[derive(Default)]
@@ -50,6 +51,28 @@ pub struct AgentState {
 impl AgentState {
     pub fn next_generation(&self) -> u64 {
         self.generation.fetch_add(1, Ordering::SeqCst) + 1
+    }
+}
+
+struct WorkspaceExtension(std::path::PathBuf);
+
+impl WorkspaceExtension {
+    fn create() -> Result<Self, String> {
+        use std::io::Write;
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?.as_nanos();
+        let path = std::env::temp_dir().join(format!("omp-d-workspace-{}-{nonce}.mjs", std::process::id()));
+        let mut file = std::fs::OpenOptions::new().write(true).create_new(true)
+            .open(&path).map_err(|error| error.to_string())?;
+        let extension = Self(path);
+        file.write_all(include_bytes!("workspace-extension.mjs")).map_err(|error| error.to_string())?;
+        Ok(extension)
+    }
+}
+
+impl Drop for WorkspaceExtension {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
     }
 }
 
@@ -93,6 +116,9 @@ pub async fn start(
             args.push(arg);
         }
     }
+    let workspace_extension = WorkspaceExtension::create()?;
+    args.push("--extension".into());
+    args.push(workspace_extension.0.to_string_lossy().into_owned());
 
     let generation = state.next_generation();
     let mut command = Command::new(&program);
@@ -135,6 +161,7 @@ pub async fn start(
         child: child.clone(),
         stdin,
         pid,
+        _workspace_extension: workspace_extension,
     });
 
     let _ = app.emit(

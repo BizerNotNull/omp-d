@@ -46,7 +46,8 @@ children; it asks the supervisor to start, send to, or stop them.
 5. `connect` sends `set_ask_dialog(enabled: true)`, then hydrates with
    `get_state`, `get_messages`, `get_session_stats`,
    `get_available_thinking_levels` and `get_available_commands`, and loads the
-   session bucket through Rust `list_sessions`.
+   session bucket through Rust `list_sessions`. A separate `get_entries`
+   request loads branch metadata without blocking transcript hydration.
 
 ## Provider login
 
@@ -119,6 +120,35 @@ channel loss and app exit terminate shells and reap their direct children.
 Terminals are independent of omp's RPC process and run with the user's normal
 permissions. Shell output is untrusted; no terminal-driven external-link or
 clipboard-write handlers are installed.
+## Conversation forks
+
+`get_entries` supplies flat persisted entries and the active leaf. `branches.ts`
+matches active-path user entries to transcript messages by role, timestamp and
+content, including attachments. Alternatives share their nearest preceding
+message entry; non-message metadata does not split that group. Nested forks
+remain separate. Traversals are iterative for long histories.
+It builds the tree locally from parent IDs, avoiding the native JSON decoder's
+depth limit on nested `get_tree` responses. Branch metadata refreshes cannot
+disable the composer, sending, queue removal or abort controls.
+
+Editing stays local until Save & fork. The store calls same-session
+`navigate_tree` on the original user entry with summarization disabled; omp
+moves the leaf to its parent without creating a session file or changing
+`sessionId`. Only a successful, non-cancelled navigation submits the edited
+prompt to the agent through the normal `prompt` RPC command, preserving the
+original images. The resulting response and later prompts remain in that
+session. Branch arrows navigate directly to a saved descendant leaf,
+preferring the current leaf for the active alternative and the newest tail
+for inactive alternatives. No local branch database is created. An unanswered
+user-only leaf follows omp's draft-restoration behavior.
+
+`branching` locks prompt submission and other session transitions. Branching
+also requires idle streaming, background work and queues. Generation and
+conversation-revision checks discard stale hydration/navigation results.
+After navigation the store clears branch-specific transient UI state and
+refreshes messages, tree and session state. Failed prompt submission restores
+the edited text and attachments to the composer. An unavailable entries API
+reports a warning and leaves edit/branch controls absent.
 
 ## Framing
 
@@ -173,6 +203,15 @@ file, folds the fixed-width title slot into the header, keeps the first
 non-synthetic user message as preview, and hides untitled sessions with no
 prompt (matching the interactive picker).
 
+`list_sessions` discovers the main checkout and its linked worktrees through
+Git, then returns a `SessionListing` with a separate session list per directory.
+The sidebar keeps the main directory first and nests worktree directories with
+branch icons. Each directory keeps up to 40 sessions, newest first; non-Git
+folders retain a single directory group. Selecting a session in another
+directory first connects the agent in that workspace, then reopens the selected
+file with `switch_session`; the RPC runtime cannot rebind cwd through that
+command alone.
+
 - New session: `new_session`, then clear local transcript/dialog/session state
   and rehydrate.
 - Switch: `switch_session(sessionPath)`, same clearing, same rehydration.
@@ -183,6 +222,16 @@ prompt (matching the interactive picker).
 - Restart: `restart()` re-spawns via `connect`, then reopens the remembered
   `sessionFile` with `switch_session`, so the conversation survives settings
   changes, crashes and manual restarts.
+- Runtime relocation (`/wt`, `/move`): both `config_update` and local
+  `prompt_result` completion trigger reconciliation. State refreshes query the
+  bundled `/ompd-workspace` extension command without relying on session-file
+  path changes. It reports `sessionManager.getCwd()` through a reserved status
+  key, including for unpersisted empty sessions. Internal query IDs are excluded
+  from prompt-result handling to prevent recursive refreshes and changes to the
+  user's busy state. The store adopts that cwd without restarting the child or
+  clearing the conversation, persists it for restart, and refreshes directory-
+  scoped sessions, catalog, and Git status. The extension file lives for the
+  child process lifetime; generation filtering rejects old-process updates.
 
 ## Composer status
 

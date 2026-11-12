@@ -1,9 +1,9 @@
-import { Activity, CircleAlert, CircleDot, Flame, ListChecks, Zap } from "lucide-react";
+import { Activity, CircleAlert, CircleDot, Flame, ListChecks, Terminal, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore, activeTodos } from "@/lib/omp/store";
 import { formatCost, formatTokens } from "@/lib/omp/format";
 
-export function StatusBar() {
+export function StatusBar({ terminalOpen, onToggleTerminal }: { terminalOpen: boolean; onToggleTerminal: () => void }) {
   const status = useAppStore((state) => state.status);
   const busy = useAppStore((state) => state.busy);
   const session = useAppStore((state) => state.session);
@@ -78,6 +78,15 @@ export function StatusBar() {
       )}
 
       <span className="ml-auto flex items-center gap-3">
+        <button
+          type="button"
+          className={cn("flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-accent hover:text-foreground", terminalOpen && "bg-accent text-foreground")}
+          onClick={onToggleTerminal}
+          aria-pressed={terminalOpen}
+          title="Toggle terminal (Ctrl+` / Cmd+`)"
+        >
+          <Terminal className="size-3" /> Terminal
+        </button>
         {session?.sessionId && (
           <span className="hidden font-mono text-[9px] text-muted-foreground/60 md:inline">
             {session.sessionId.slice(0, 10)}

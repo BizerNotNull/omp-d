@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- Embedded xterm.js terminal backed by native PTYs: workspace shells, persistent hidden tabs, resizable/maximizable bottom panel, keyboard toggle, exit status, and process-tree cleanup.
 - Edit sent user messages with a pencil and Save & fork in the current omp session, using its `/tree` navigation. The edited prompt is sent to the agent; original branches and image attachments remain available.
 - Per-message branch counters and previous/next arrows restore saved conversation tails in the same session without resubmitting prompts.
 - Group Recent Sessions under the main repository directory, with nested linked-worktree directories marked by a branch icon.

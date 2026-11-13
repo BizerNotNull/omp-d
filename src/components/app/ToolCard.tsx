@@ -21,7 +21,11 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import type { ToolCallContent, ToolResultMessage } from "@/lib/omp/types";
 import type { ToolRun } from "@/lib/omp/store";
-import { imageBlocks, stripAnsi, toBase64DataUrl, toolArgSummary, truncate } from "@/lib/omp/format";
+import { imageBlocks, stripAnsi, toolArgSummary, truncate } from "@/lib/omp/format";
+import { writeFigure } from "@/lib/omp/figures";
+import { ContentImage } from "./ContentImage";
+import { SvgFigure } from "./SvgFigure";
+import { MermaidFigure } from "./MermaidFigure";
 
 function iconForTool(name: string): ReactNode {
   const className = "size-3.5 shrink-0";
@@ -154,7 +158,8 @@ export const ToolCard = memo(function ToolCard({
   }, [output]);
   const detailsPreview = useMemo(() => (showDetails ? detailsText(details) : undefined), [showDetails, details]);
   const hasDetails = Boolean(details && typeof details === "object" && Object.keys(details).length > 0);
-  const images = result ? imageBlocks(result.content) : [];
+  const images = result ? imageBlocks(result.content) : run?.images ?? [];
+  const figure = writeFigure(name, args, status === "error");
 
   return (
     <div
@@ -220,18 +225,6 @@ export const ToolCard = memo(function ToolCard({
             </p>
           ) : null}
 
-          {images.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {images.map((image, index) => (
-                <img
-                  key={index}
-                  src={toBase64DataUrl(image)}
-                  alt="tool output"
-                  className="max-h-56 rounded-md border object-contain"
-                />
-              ))}
-            </div>
-          )}
 
           {!diff && hasDetails && (
             <div>
@@ -249,6 +242,13 @@ export const ToolCard = memo(function ToolCard({
               )}
             </div>
           )}
+        </div>
+      )}
+      {(images.length > 0 || figure) && (
+        <div className="space-y-2 border-t bg-background/60 px-3 py-2.5">
+          {images.map((image, index) => <ContentImage key={index} image={image} alt="tool output" />)}
+          {figure?.lang === "svg" && <SvgFigure source={figure.source} streaming={status === "running" || status === "pending"} />}
+          {figure?.lang === "mermaid" && <MermaidFigure source={figure.source} streaming={status === "running" || status === "pending"} />}
         </div>
       )}
     </div>

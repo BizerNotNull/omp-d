@@ -138,7 +138,7 @@ export function imageBlocks(content: unknown): ImageContent[] {
 
 function isImageBlock(block: unknown): block is ImageContent {
   if (!block || typeof block !== "object" || !("type" in block)) return false;
-  return block.type === "image" && "mimeType" in block && "data" in block;
+  return block.type === "image" && "mimeType" in block && typeof block.mimeType === "string" && "data" in block && typeof block.data === "string";
 }
 
 export function toolCalls(content: unknown): ToolCallContent[] {
@@ -153,5 +153,5 @@ function isToolCallBlock(block: unknown): block is ToolCallContent {
 }
 
 export function toBase64DataUrl(image: ImageContent): string {
-  return `data:${image.mimeType};base64,${image.data}`;
+  return image.data.startsWith(`data:${image.mimeType};base64,`) ? image.data : `data:${image.mimeType};base64,${image.data}`;
 }

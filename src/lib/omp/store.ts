@@ -82,6 +82,7 @@ export interface ToolRun {
   startedAt: number;
   updatedAt: number;
   output?: string;
+  images?: ImageContent[];
   details?: unknown;
 }
 
@@ -1123,6 +1124,7 @@ function upsertToolRun(
     startedAt: previous?.startedAt ?? now,
     updatedAt: now,
     output,
+    images: isRecord(result) && Array.isArray(result.content) ? imageBlocks(result.content) : previous?.images,
     details: extractToolDetails(result) ?? previous?.details,
   };
   set((state) => ({ toolRuns: { ...state.toolRuns, [toolCallId]: run } }));

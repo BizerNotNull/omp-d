@@ -305,3 +305,17 @@ test("delayed branch metadata never blocks transcript hydration or ordinary prom
   expect(store.getState().treeLoading).toBe(false);
   expect(store.getState().messageBranches[0]?.entryId).toBe("user");
 });
+
+test("partial tool images display before message hydration and final content replaces them", () => {
+  const image: ImageContent = { type: "image", mimeType: "image/png", data: "AA==" };
+  store.getState().applyFrame({
+    type: "tool_execution_update", toolCallId: "image-tool", toolName: "read",
+    partialResult: { content: [image] },
+  });
+  expect(store.getState().toolRuns["image-tool"].images).toEqual([image]);
+  store.getState().applyFrame({
+    type: "tool_execution_end", toolCallId: "image-tool", toolName: "read", isError: false,
+    result: { content: [{ type: "text", text: "No final image" }] },
+  });
+  expect(store.getState().toolRuns["image-tool"].images).toEqual([]);
+});

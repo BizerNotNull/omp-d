@@ -7,6 +7,7 @@ export function ChatView() {
   const messages = useAppStore((state) => state.messages);
   const pending = useAppStore((state) => state.pending);
   const status = useAppStore((state) => state.status);
+  const busy = useAppStore((state) => state.busy);
   const sessionId = useAppStore((state) => state.session?.sessionId);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const stick = useRef(true);
@@ -19,9 +20,8 @@ export function ChatView() {
   }
 
   useLayoutEffect(() => {
-    if (messages.length === 0 && pending.length === 0) return;
     if (stick.current) scrollToBottom();
-  }, [messages, pending]);
+  }, [messages, pending, busy]);
 
   useEffect(() => {
     if (status === "ready" && stick.current) scrollToBottom();
@@ -41,7 +41,7 @@ export function ChatView() {
     setAtBottom(nearBottom);
   }
 
-  const empty = messages.length === 0 && pending.length === 0;
+  const empty = messages.length === 0 && pending.length === 0 && !busy;
 
   return (
     <div className="relative min-h-0 flex-1">

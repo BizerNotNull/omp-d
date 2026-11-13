@@ -4,7 +4,6 @@ import {
   GitBranch,
   LoaderCircle,
   MessageSquarePlus,
-  Plus,
   Settings2,
   SquarePen,
 } from "lucide-react";
@@ -73,27 +72,15 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             <div className="truncate text-[12px] font-medium">{projectName}</div>
             <div className="truncate text-[10px] text-muted-foreground">{cwd ?? "Choose a folder"}</div>
           </div>
-          <SquarePen className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
         </button>
-      </div>
-
-      <div className="mt-3 flex items-center gap-2 px-3">
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-7 flex-1 justify-start gap-1.5 border-sidebar-border bg-transparent text-[11px] hover:bg-sidebar-accent"
-          disabled={status !== "ready"}
-          onClick={() => void newSession()}
-        >
-          <Plus className="size-3.5" />
-          New session
-        </Button>
-        {sessionsLoading && <LoaderCircle className="size-3.5 animate-spin text-muted-foreground" />}
       </div>
 
       <div className="mt-4 flex items-center justify-between px-4 pb-1.5">
         <h2 className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">Recent</h2>
-        <span className="text-[10px] text-muted-foreground/50">{sessionCount}</span>
+        <div className="flex items-center gap-2">
+          {sessionsLoading && <LoaderCircle aria-label="Loading sessions" className="size-3.5 animate-spin text-muted-foreground" />}
+          <span className="text-[10px] text-muted-foreground/50">{sessionCount}</span>
+        </div>
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
@@ -116,7 +103,18 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
                 className="flex min-w-0 items-center gap-1.5 px-2 py-1.5 text-[11px] font-medium"
               >
                 <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 truncate">{directoryName(sessionListing.repositoryCwd)}</span>
+                <span className="min-w-0 flex-1 truncate">{directoryName(sessionListing.repositoryCwd)}</span>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="shrink-0 text-muted-foreground hover:text-foreground"
+                  disabled={status !== "ready"}
+                  onClick={() => void newSession()}
+                  aria-label="New session"
+                  title="New session"
+                >
+                  <SquarePen className="size-3.5" />
+                </Button>
               </h3>
               {sessionListing.directories.map((directory) => (
                 <section

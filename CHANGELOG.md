@@ -9,6 +9,8 @@
 - Group Recent Sessions under the main repository directory, with nested linked-worktree directories marked by a branch icon.
 
 ### Fixed
+- Use the pen beside the Recent repository name to start a new session; remove the separate New session button.
+- Remove the top-bar session-path copy, context compaction, and new-session controls.
 - Keep chat auto-scroll following across tool/content resizes and viewport changes; preserve reading position when scrolled up and restore following with Jump to latest.
 - Show a conversation spinner while waiting for the first model token, including before an assistant message starts and while its content is empty.
 - Follow the relocated session directory after `/wt` and `/move` without restarting the agent; refresh the workspace, recent sessions, model catalog, and Git status.

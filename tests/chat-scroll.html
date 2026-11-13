@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>Chat scroll regression</title></head>
+  <body>
+    <button id="run">Run scroll regression</button>
+    <pre id="results">Open /tests/chat-scroll.html through bun run dev.</pre>
+    <div id="chat" style="display:flex;flex-direction:column;height:480px;width:800px;border:1px solid"></div>
+    <script type="module">
+      import React from "react";
+      import { createRoot } from "react-dom/client";
+      import { ChatView } from "/src/components/app/ChatView.tsx";
+      import { useAppStore as store } from "/src/lib/omp/store.ts";
+      import "/src/index.css";
+
+      const host = document.querySelector("#chat");
+      const results = document.querySelector("#results");
+      const run = document.querySelector("#run");
+      const frame = () => new Promise(requestAnimationFrame);
+      const user = (text) => ({ role: "user", content: text, timestamp: 1 });
+      const assistant = (text) => ({ role: "assistant", content: [{ type: "text", text }], timestamp: 2 });
+      const longText = Array.from({ length: 60 }, (_, i) => `Conversation line ${i}`).join("\n\n");
+      let messages = [user("First turn"), assistant(longText)];
+      store.setState({ messages, pending: [], status: "ready", session: { sessionId: "scroll-a" } });
+      createRoot(host).render(React.createElement(React.StrictMode, null, React.createElement(ChatView)));
+
+      async function until(predicate, label) {
+        const deadline = performance.now() + 4000;
+        while (!predicate()) {
+          if (performance.now() > deadline) throw new Error(label);
+          await frame();
+        }
+      }
+
+      run.onclick = async () => {
+        run.disabled = true;
+        results.textContent = "";
+        const passed = (name) => { results.textContent += `PASS ${name}\n`; };
+        try {
+          const viewport = host.querySelector(".overflow-y-auto");
+          const bottom = () => viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 2;
+          const jump = () => [...host.querySelectorAll("button")].find((el) => el.textContent.includes("Jump to latest"));
+          await until(bottom, "Initial history did not scroll to bottom");
+
+          for (let turn = 0; turn < 4; turn++) {
+            messages = [...messages, user(`Turn ${turn}`)];
+            store.setState({ messages });
+            for (let chunk = 1; chunk <= 4; chunk++) {
+              store.setState({ pending: [{ messageId: `pending-${turn}`, message: assistant(longText.slice(0, chunk * 150)) }] });
+              await frame();
+              await until(bottom, `Turn ${turn}, chunk ${chunk} lost following`);
+            }
+            messages = [...messages, assistant(longText)];
+            store.setState({ messages, pending: [] });
+            await frame();
+            await until(bottom, `Settled turn ${turn} lost following`);
+          }
+          passed("multi-turn streaming and settlement");
+
+          messages = [...messages, { role: "assistant", timestamp: 3, content: [{ type: "thinking", thinking: longText }] }];
+          store.setState({ messages });
+          await until(() => [...host.querySelectorAll("button")].some((el) => el.textContent.includes("Thinking")), "Thinking control missing");
+          await until(bottom, "Thinking message did not scroll");
+          [...host.querySelectorAll("button")].find((el) => el.textContent.includes("Thinking")).click();
+          await frame();
+          await until(bottom, "Child-only content expansion lost following");
+          passed("content resize without message-array changes");
+
+          host.style.height = "260px";
+          await frame();
+          await until(bottom, "Viewport resize lost following");
+          passed("viewport shrink");
+
+          viewport.scrollTop -= 600;
+          await until(jump, "Scrolling up did not pause following");
+          const readingPosition = viewport.scrollTop;
+          messages = [...messages, user("New turn while reading"), assistant(longText)];
+          store.setState({ messages });
+          await frame();
+          await frame();
+          if (Math.abs(viewport.scrollTop - readingPosition) > 1 || !jump()) throw new Error("New content interrupted reading history");
+          passed("reading history remains paused");
+
+          jump().click();
+          await frame();
+          await frame();
+          if (jump()) throw new Error("Smooth jump disabled following before reaching bottom");
+          await until(bottom, "Jump to latest did not reach bottom");
+          messages = [...messages, user("After jump"), assistant(longText)];
+          store.setState({ messages });
+          await frame();
+          await until(bottom, "Jump did not restore following for subsequent turns");
+          passed("smooth jump restores following");
+
+          viewport.scrollTop -= 600;
+          await until(jump, "Could not pause before switching sessions");
+          store.setState({ session: { sessionId: "scroll-b" }, messages: [user("Another session"), assistant(longText)] });
+          await frame();
+          await until(() => bottom() && !jump(), "Session change did not reset following");
+          passed("session switch resets following");
+          results.textContent += "All scroll regressions passed.";
+        } catch (error) {
+          results.textContent += `FAIL ${error.message}`;
+          console.error(error);
+        }
+      };
+    </script>
+  </body>
+</html>

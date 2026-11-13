@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
-import { ArrowUp, CornerDownLeft, ImagePlus, LoaderCircle, Square, X } from "lucide-react";
+import { ArrowUp, ImagePlus, LoaderCircle, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -26,8 +26,10 @@ function readImage(file: File): Promise<ImageContent | undefined> {
 }
 
 export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModels: () => void; onOpenSettings: () => void; active: boolean }) {
-  const [draft, setDraft] = useState("");
-  const [images, setImages] = useState<ImageContent[]>([]);
+  const draft = useAppStore((state) => state.draftText);
+  const setDraft = useAppStore((state) => state.setDraftText);
+  const images = useAppStore((state) => state.draftImages);
+  const setImages = useAppStore((state) => state.setDraftImages);
   const [submitting, setSubmitting] = useState(false);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -39,8 +41,6 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
   const status = useAppStore((state) => state.status);
   const commands = useAppStore((state) => state.commands);
   const queue = useAppStore((state) => state.queue);
-  const editorText = useAppStore((state) => state.editorText);
-  const editorImages = useAppStore((state) => state.editorImages);
   const editorToken = useAppStore((state) => state.editorToken);
   const prompt = useAppStore((state) => state.prompt);
   const abort = useAppStore((state) => state.abort);
@@ -52,13 +52,11 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
   }, [active, status]);
 
   useEffect(() => {
-    if (editorToken !== lastEditorToken.current && (editorText !== undefined || editorImages !== undefined)) {
+    if (editorToken !== lastEditorToken.current) {
       lastEditorToken.current = editorToken;
-      setDraft(editorText ?? "");
-      if (editorImages !== undefined) setImages(editorImages);
       if (active) textareaRef.current?.focus();
     }
-  }, [editorText, editorImages, editorToken, active]);
+  }, [editorToken, active]);
 
   const commandQuery = useMemo(() => {
     if (!draft.startsWith("/")) return undefined;
@@ -335,11 +333,6 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
           </div>
         </div>
         <ComposerStatus active={active} />
-
-        <div className="mt-1.5 flex items-center gap-2 px-1 text-[10px] text-muted-foreground/60">
-          <CornerDownLeft className="size-2.5" />
-          <span>Enter sends; Alt+Enter queues a follow-up; Esc stops a running turn.</span>
-        </div>
       </div>
     </div>
   );

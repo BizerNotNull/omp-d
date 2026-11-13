@@ -20,16 +20,15 @@ async fn start_agent(
 }
 
 #[tauri::command]
-async fn stop_agent(app: AppHandle, state: State<'_, AgentState>) -> Result<(), String> {
-    let _guard = state.start_lock.lock().await;
-    agent::stop(&state).await?;
-    let _ = app.emit("omp://process", serde_json::json!({ "kind": "stopped" }));
+async fn stop_agent(app: AppHandle, state: State<'_, AgentState>, generation: u64) -> Result<(), String> {
+    agent::stop(&state, generation).await?;
+    let _ = app.emit("omp://process", serde_json::json!({ "kind": "stopped", "generation": generation }));
     Ok(())
 }
 
 #[tauri::command]
-async fn rpc_send(state: State<'_, AgentState>, command: serde_json::Value) -> Result<(), String> {
-    agent::send(&state, command).await
+async fn rpc_send(state: State<'_, AgentState>, generation: u64, command: serde_json::Value) -> Result<(), String> {
+    agent::send(&state, generation, command).await
 }
 
 #[tauri::command]
@@ -144,7 +143,7 @@ pub fn run() {
             terminal::shutdown(app_handle.state::<terminal::TerminalState>().inner());
             let state = app_handle.state::<AgentState>();
             tauri::async_runtime::block_on(async {
-                let _ = agent::stop(state.inner()).await;
+                agent::stop_all(state.inner()).await;
                 let auth_state = app_handle.state::<auth::AuthState>();
                 let _ = auth::stop(auth_state.inner(), None).await;
             });

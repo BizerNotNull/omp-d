@@ -1,10 +1,9 @@
 import { useState } from "react";
 import {
-  Brain,
   Check,
   ChevronDown,
-  Cpu,
   LoaderCircle,
+  MessageSquare,
   PanelRight,
   Pencil,
   Settings2,
@@ -54,31 +53,36 @@ export function TopBar({
   const level = session?.thinkingLevel ?? "off";
 
   return (
-    <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-background/80 px-3 backdrop-blur">
-      <div className="flex min-w-0 flex-1 items-center gap-2">
-        {busy && <LoaderCircle className="size-3.5 animate-spin text-amber-500" />}
+    <header aria-label="Session toolbar" className="flex min-h-10 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b bg-sidebar px-3 py-1">
+      <div className="flex min-w-0 flex-1 basis-32 items-center gap-2">
+        {busy
+          ? <LoaderCircle aria-label="Agent working" className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+          : <MessageSquare aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />}
         <button
           type="button"
           onClick={() => {
             setRenameValue(session?.sessionName ?? "");
             setRenameOpen(true);
           }}
-          className="group flex min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 text-left hover:bg-muted"
+          aria-label={`Rename session: ${title}`}
+          title={title}
+          className="group flex min-w-0 items-center gap-2 rounded px-1.5 py-1 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <span className="max-w-[38vw] truncate text-[12.5px] font-medium">{title}</span>
-          <Pencil className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+          <span className="truncate text-xs">{title}</span>
+          <Pencil aria-hidden="true" className="size-3 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100" />
         </button>
       </div>
 
-      <div className="ml-auto flex shrink-0 items-center gap-1">
+      <div className="ml-auto flex min-w-0 max-w-full items-center gap-0.5">
         <button
           type="button"
           onClick={onOpenModels}
-          className="flex h-7 items-center gap-1.5 rounded-lg border border-border/70 bg-card px-2 text-[11px] transition-colors hover:bg-muted"
+          aria-label={`Choose model: ${modelLabel(session?.model)}`}
+          title="Choose model"
+          className="flex h-7 min-w-0 items-center gap-1 rounded px-2 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <Cpu className="size-3.5 text-muted-foreground" />
-          <span className="max-w-40 truncate">{modelLabel(session?.model)}</span>
-          <ChevronDown className="size-3 text-muted-foreground" />
+          <span className="max-w-36 truncate">{modelLabel(session?.model)}</span>
+          <ChevronDown aria-hidden="true" className="size-3 shrink-0" />
         </button>
 
         <DropdownMenu>
@@ -87,11 +91,12 @@ export function TopBar({
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-7 gap-1.5 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+                aria-label={`Thinking level: ${level}`}
+                title="Thinking level"
+                className="h-7 shrink-0 gap-1 rounded px-2 text-[11px] text-muted-foreground hover:text-foreground"
               />
             }
           >
-            <Brain className="size-3.5" />
             <span className="capitalize">{level}</span>
             <ChevronDown className="size-3" />
           </DropdownMenuTrigger>
@@ -110,24 +115,28 @@ export function TopBar({
           </DropdownMenuContent>
         </DropdownMenu>
 
+        <span aria-hidden="true" className="mx-1 h-4 shrink-0 border-l" />
         <Button
           variant="ghost"
           size="icon-sm"
           className={cn(
-            "hidden text-muted-foreground hover:text-foreground xl:inline-flex",
+            "hidden size-7 rounded text-muted-foreground hover:text-foreground xl:inline-flex",
             panelOpen && "bg-muted text-foreground",
           )}
           onClick={onTogglePanel}
           aria-label="Toggle activity panel"
+          aria-pressed={panelOpen}
+          title="Toggle activity panel"
         >
           <PanelRight className="size-4" />
         </Button>
         <Button
           variant="ghost"
           size="icon-sm"
-          className="text-muted-foreground hover:text-foreground"
+          className="size-7 shrink-0 rounded text-muted-foreground hover:text-foreground"
           onClick={onOpenSettings}
           aria-label="Settings"
+          title="Settings (Ctrl+,)"
         >
           <Settings2 className="size-4" />
         </Button>

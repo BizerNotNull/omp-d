@@ -3,13 +3,17 @@
 ## Unreleased
 
 ### Added
+- Keep open sessions running in independent background runtimes when switching sessions, starting a new session, or opening another workspace. Preserve each session's streaming state, queues, dialogs and composer draft; show background activity and pending input in Open sessions.
 - Render SVG and Mermaid fences, theme-aware SVG image blocks, previews of written `.svg`/`.mmd`/`.mermaid` files, and numeric comparison charts below compatible tables. Figures remain visible in collapsed tool cards; partial tool-result images appear during execution.
 - Embedded xterm.js terminal backed by native PTYs: workspace shells, persistent hidden tabs, resizable/maximizable bottom panel, keyboard toggle, exit status, and process-tree cleanup.
 - Edit sent user messages with a pencil and Save & fork in the current omp session, using its `/tree` navigation. The edited prompt is sent to the agent; original branches and image attachments remain available.
 - Per-message branch counters and previous/next arrows restore saved conversation tails in the same session without resubmitting prompts.
 - Group Recent Sessions under the main repository directory, with nested linked-worktree directories marked by a branch icon.
+- Show an in-progress spinner beside the active session in Recent while the agent is working.
 
 ### Fixed
+- Remove the PID label from the sidebar status footer.
+- Replace the split top headers with one compact workspace-wide toolbar, flat model/thinking selectors, and a single Settings button; remove repeated sidebar branding.
 - Restore the missing React effect import in ChatView so the frontend builds after the chat-scroll merge.
 - Use the pen beside the Recent repository name to start a new session; remove the separate New session button.
 - Remove the top-bar session-path copy, context compaction, and new-session controls.

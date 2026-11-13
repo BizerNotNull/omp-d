@@ -4,7 +4,6 @@ import {
   GitBranch,
   LoaderCircle,
   MessageSquarePlus,
-  Settings2,
   SquarePen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -13,17 +12,19 @@ import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/omp/store";
 import { formatRelativeTime, stripPrivateUse } from "@/lib/omp/format";
 
-export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
+export function Sidebar() {
   const cwd = useAppStore((state) => state.cwd);
   const status = useAppStore((state) => state.status);
   const sessionListing = useAppStore((state) => state.sessionListing);
   const sessionsLoading = useAppStore((state) => state.sessionsLoading);
   const session = useAppStore((state) => state.session);
-  const startInfo = useAppStore((state) => state.startInfo);
   const openProjectDialog = useAppStore((state) => state.openProjectDialog);
   const newSession = useAppStore((state) => state.newSession);
   const switchSession = useAppStore((state) => state.switchSession);
   const busy = useAppStore((state) => state.busy);
+  const openSessions = useAppStore((state) => state.openSessions);
+  const activeRuntimeId = useAppStore((state) => state.activeRuntimeId);
+  const selectRuntime = useAppStore((state) => state.selectRuntime);
 
   const projectName = useMemo(() => {
     if (!cwd) return "No project";
@@ -36,29 +37,8 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
 
   return (
     <aside className="flex w-[264px] min-w-0 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
-      <div className="flex items-center gap-2.5 px-3.5 py-3">
-        <div className="relative flex size-8 items-center justify-center rounded-lg border border-sidebar-border bg-sidebar-accent text-[15px] font-semibold">
-          π
-          <span className={cn("status-dot absolute -right-0.5 -bottom-0.5", statusTone(status))} />
-        </div>
-        <div className="min-w-0">
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-[13px] font-semibold tracking-tight">omp-d</span>
-            <span className="rounded border border-sidebar-border px-1 text-[9px] uppercase tracking-wider text-muted-foreground">
-              rpc
-            </span>
-          </div>
-          <div className="truncate text-[10.5px] text-muted-foreground">Oh My Pi desktop</div>
-        </div>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="ml-auto text-muted-foreground hover:text-foreground"
-          onClick={onOpenSettings}
-          aria-label="Settings"
-        >
-          <Settings2 className="size-4" />
-        </Button>
+      <div className="flex h-9 shrink-0 items-center px-4 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+        Workspace
       </div>
 
       <div className="px-3">
@@ -85,6 +65,25 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="min-w-0 px-2 pb-3">
+          {openSessions.length > 1 && (
+            <section aria-label="Open sessions" className="mb-3">
+              <h3 className="px-2 py-1.5 text-[10px] font-medium text-muted-foreground">Open sessions</h3>
+              {openSessions.map((entry) => (
+                <button
+                  key={entry.id}
+                  type="button"
+                  onClick={() => selectRuntime(entry.id)}
+                  title={entry.cwd}
+                  className={cn("flex w-full min-w-0 items-center gap-1.5 rounded-lg px-2.5 py-2 text-left text-[12px]", entry.id === activeRuntimeId ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60")}
+                >
+                  {(entry.busy || entry.status === "starting") && <LoaderCircle aria-label="Session in progress" className="size-3.5 shrink-0 animate-spin text-emerald-500 motion-reduce:animate-none" />}
+                  <span className="min-w-0 flex-1 truncate">{stripPrivateUse(entry.title)}</span>
+                  {entry.dialogs > 0 && <span className="shrink-0 text-[10px] text-amber-500">Needs input</span>}
+                  {(entry.status === "error" || entry.status === "stopped") && <span className="shrink-0 text-[10px] text-muted-foreground">{entry.status}</span>}
+                </button>
+              ))}
+            </section>
+          )}
           {sessionsLoading && !sessionListing && (
             <div role="status" className="px-2 py-6 text-center text-[11px] text-muted-foreground">
               Loading sessions…
@@ -145,6 +144,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
                       const title = cleanTitle || cleanPreview || "Untitled session";
                       const subtitle = cleanTitle && cleanPreview && cleanPreview !== cleanTitle ? cleanPreview : "";
                       const current = Boolean(activePath && item.path === activePath);
+                      const runtime = openSessions.find((entry) => entry.path === item.path);
                       return (
                         <button
                           key={item.path}
@@ -156,7 +156,9 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
                           )}
                         >
                           <div className="flex w-full min-w-0 items-center gap-1.5">
-                            {current && <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" />}
+                            {runtime?.busy
+                              ? <LoaderCircle aria-label="Session in progress" className="size-3.5 shrink-0 animate-spin text-emerald-500 motion-reduce:animate-none" />
+                              : current && <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" />}
                             <span className={cn("min-w-0 flex-1 truncate text-[12px]", current ? "font-medium" : "text-sidebar-foreground/85")}>
                               {title}
                             </span>
@@ -184,7 +186,6 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
           <span className={cn("status-dot", statusTone(status))} />
           <span className="truncate">{statusText(status, busy)}</span>
-          {startInfo && <span className="ml-auto font-mono text-[9px] text-muted-foreground/50">pid {startInfo.pid}</span>}
         </div>
       </div>
     </aside>

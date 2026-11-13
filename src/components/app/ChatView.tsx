@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { useAppStore } from "@/lib/omp/store";
 import { Transcript, TranscriptEmpty } from "./Transcript";
@@ -6,9 +6,10 @@ import { Transcript, TranscriptEmpty } from "./Transcript";
 export function ChatView() {
   const messages = useAppStore((state) => state.messages);
   const pending = useAppStore((state) => state.pending);
-  const status = useAppStore((state) => state.status);
   const sessionId = useAppStore((state) => state.session?.sessionId);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const lastScrollTop = useRef(0);
   const stick = useRef(true);
   const [atBottom, setAtBottom] = useState(true);
 
@@ -16,29 +17,43 @@ export function ChatView() {
     const element = scrollRef.current;
     if (!element) return;
     element.scrollTo({ top: element.scrollHeight, behavior });
+    lastScrollTop.current = element.scrollTop;
   }
 
   useLayoutEffect(() => {
-    if (messages.length === 0 && pending.length === 0) return;
-    if (stick.current) scrollToBottom();
-  }, [messages, pending]);
-
-  useEffect(() => {
-    if (status === "ready" && stick.current) scrollToBottom();
-  }, [status]);
-
-  useEffect(() => {
     stick.current = true;
     setAtBottom(true);
     scrollToBottom();
   }, [sessionId]);
 
+  useLayoutEffect(() => {
+    const element = scrollRef.current;
+    const content = contentRef.current;
+    if (!element || !content) return;
+
+    // Tool updates, loaded images, and viewport changes can resize the chat
+    // without changing the message arrays.
+    const observer = new ResizeObserver(() => {
+      if (stick.current) scrollToBottom();
+    });
+    observer.observe(content);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  useLayoutEffect(() => {
+    if (stick.current) scrollToBottom();
+  }, [messages, pending]);
+
   function onScroll() {
     const element = scrollRef.current;
     if (!element) return;
     const nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 96;
-    stick.current = nearBottom;
-    setAtBottom(nearBottom);
+    // A growing transcript or an in-progress jump must not disable following.
+    if (element.scrollTop < lastScrollTop.current) stick.current = nearBottom;
+    else if (nearBottom) stick.current = true;
+    lastScrollTop.current = element.scrollTop;
+    setAtBottom(stick.current);
   }
 
   const empty = messages.length === 0 && pending.length === 0;
@@ -46,7 +61,7 @@ export function ChatView() {
   return (
     <div className="relative min-h-0 flex-1">
       <div ref={scrollRef} onScroll={onScroll} className="scroll-thin h-full overflow-y-auto px-4">
-        <div className="mx-auto w-full max-w-3xl pt-4 pb-2">
+        <div ref={contentRef} className="mx-auto w-full max-w-3xl pt-4 pb-2">
           {empty ? <TranscriptEmpty /> : <Transcript messages={messages} pending={pending} />}
           <div className="h-2" />
         </div>

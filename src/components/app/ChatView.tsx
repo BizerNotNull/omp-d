@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { useAppStore } from "@/lib/omp/store";
 import { Transcript, TranscriptEmpty } from "./Transcript";

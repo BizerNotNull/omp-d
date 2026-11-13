@@ -10,6 +10,7 @@
 
 ### Fixed
 - Keep chat auto-scroll following across tool/content resizes and viewport changes; preserve reading position when scrolled up and restore following with Jump to latest.
+- Show a conversation spinner while waiting for the first model token, including before an assistant message starts and while its content is empty.
 - Follow the relocated session directory after `/wt` and `/move` without restarting the agent; refresh the workspace, recent sessions, model catalog, and Git status.
 - Reconcile the workspace when local slash commands finish, even when the observed session-file path is unchanged; keep internal workspace-query completions out of user turn state.
 - Display slash-command errors from `command_output` as error notifications and retain command output in Activity, including `/wt` branch-name conflicts.

@@ -6,6 +6,8 @@ import { Transcript, TranscriptEmpty } from "./Transcript";
 export function ChatView() {
   const messages = useAppStore((state) => state.messages);
   const pending = useAppStore((state) => state.pending);
+  const status = useAppStore((state) => state.status);
+  const busy = useAppStore((state) => state.busy);
   const sessionId = useAppStore((state) => state.session?.sessionId);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -21,6 +23,14 @@ export function ChatView() {
   }
 
   useLayoutEffect(() => {
+    if (stick.current) scrollToBottom();
+  }, [messages, pending, busy]);
+
+  useEffect(() => {
+    if (status === "ready" && stick.current) scrollToBottom();
+  }, [status]);
+
+  useEffect(() => {
     stick.current = true;
     setAtBottom(true);
     scrollToBottom();
@@ -56,7 +66,7 @@ export function ChatView() {
     setAtBottom(stick.current);
   }
 
-  const empty = messages.length === 0 && pending.length === 0;
+  const empty = messages.length === 0 && pending.length === 0 && !busy;
 
   return (
     <div className="relative min-h-0 flex-1">

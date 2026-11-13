@@ -20,6 +20,7 @@ const TerminalPanel = lazy(() => import("./TerminalPanel").then((module) => ({ d
 export function AppShell() {
   const bootstrap = useAppStore((state) => state.bootstrap);
   const cwd = useAppStore((state) => state.cwd);
+  const activeRuntimeId = useAppStore((state) => state.activeRuntimeId);
   const theme = useAppStore((state) => state.preferences.theme);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [modelsOpen, setModelsOpen] = useState(false);
@@ -77,20 +78,20 @@ export function AppShell() {
   return (
     <TooltipProvider>
       <div className="flex h-full w-full flex-col bg-background text-foreground">
+        {!modelsOpen && <TopBar
+          onOpenModels={() => setModelsOpen(true)}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onTogglePanel={() => setPanelOpen((value) => !value)}
+          panelOpen={panelOpen}
+        />}
         <div className="flex min-h-0 flex-1">
-          {!modelsOpen && <Sidebar onOpenSettings={() => setSettingsOpen(true)} />}
+          {!modelsOpen && <Sidebar />}
           <main className="relative flex min-w-0 flex-1 flex-col">
-            {!modelsOpen && <TopBar
-              onOpenModels={() => setModelsOpen(true)}
-              onOpenSettings={() => setSettingsOpen(true)}
-              onTogglePanel={() => setPanelOpen((value) => !value)}
-              panelOpen={panelOpen}
-            />}
             {modelsOpen && <div className={loginProvider ? "hidden" : "flex min-h-0 flex-1 flex-col"}><ModelPicker active={!loginProvider} onClose={() => setModelsOpen(false)} onLoginRequest={setLoginProvider} /></div>}
             {modelsOpen && loginProvider && <ProviderLogin key={`${cwd}:${loginProvider}`} provider={loginProvider} options={{ cwd, binary: preferences.binary.trim() || "omp", extraArgs: splitExtraArgs(preferences.extraArgs) }} onBack={() => setLoginProvider(undefined)} onSuccess={() => { setLoginProvider(undefined); void useAppStore.getState().fetchModels(); }} />}
             <div className={modelsOpen ? "hidden" : "flex min-h-0 flex-1 flex-col overflow-hidden"}>
-              <ChatView />
-              <Composer active={!modelsOpen && !settingsOpen} onOpenModels={() => setModelsOpen(true)} onOpenSettings={() => setSettingsOpen(true)} />
+              <ChatView key={`chat-${activeRuntimeId}`} />
+              <Composer key={`composer-${activeRuntimeId}`} active={!modelsOpen && !settingsOpen} onOpenModels={() => setModelsOpen(true)} onOpenSettings={() => setSettingsOpen(true)} />
             </div>
             {terminalWorkspace === cwd && (
               <Suspense fallback={terminalVisible ? <div role="status" className="border-t p-3 text-xs text-muted-foreground">Loading terminal…</div> : null}>

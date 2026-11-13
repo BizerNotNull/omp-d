@@ -1,4 +1,4 @@
-import { CheckCircle2, Circle, CircleDot, LoaderCircle, ScrollText, Target, XCircle } from "lucide-react";
+import { CheckCircle2, Circle, CircleDot, LoaderCircle, Target, XCircle } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { useAppStore, activeTodos } from "@/lib/omp/store";
@@ -45,10 +45,9 @@ export function RightPanel() {
 
   return (
     <aside className="hidden w-[292px] shrink-0 flex-col border-l bg-sidebar/60 xl:flex">
-      <div className="flex h-12 items-center gap-2 border-b px-4">
-        <ScrollText className="size-4 text-muted-foreground" />
-        <span className="text-[12px] font-medium">Activity</span>
-        <span className="ml-auto text-[10px] text-muted-foreground">{session?.messageCount ?? 0} entries</span>
+      <div className="flex h-9 shrink-0 items-center gap-2 px-4">
+        <h2 className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Activity</h2>
+        <span className="ml-auto text-[10px] tabular-nums text-muted-foreground">{session?.messageCount ?? 0} entries</span>
       </div>
 
       <ScrollArea className="min-h-0 flex-1">

@@ -1,8 +1,9 @@
 //! Supervision of the `omp --mode rpc-ui` child process.
 
+use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -42,10 +43,9 @@ pub struct AgentHandle {
 
 #[derive(Default)]
 pub struct AgentState {
-    pub agent: Mutex<Option<AgentHandle>>,
+    pub agents: Mutex<HashMap<u64, Arc<Mutex<AgentHandle>>>>,
     pub generation: AtomicU64,
-    /// Serializes start/stop so overlapping host calls cannot stop each other's child.
-    pub start_lock: Mutex<()>,
+    shutting_down: AtomicBool,
 }
 
 impl AgentState {
@@ -76,20 +76,18 @@ impl Drop for WorkspaceExtension {
     }
 }
 
-/// Start a fresh RPC session, replacing any running child.
+/// Start an independent RPC session without disturbing any existing child.
 pub async fn start(
     app: AppHandle,
     state: &AgentState,
     options: StartOptions,
 ) -> Result<StartInfo, String> {
-    let _start_guard = state.start_lock.lock().await;
     let canonical = std::fs::canonicalize(&options.cwd)
         .map_err(|e| format!("Cannot open {}: {e}", options.cwd))?;
     if !canonical.is_dir() {
         return Err(format!("Not a directory: {}", options.cwd));
     }
     let cwd = plain_path(&canonical);
-    stop(state).await?;
 
     let program = options
         .binary
@@ -157,12 +155,21 @@ pub async fn start(
     );
 
     let child = Arc::new(Mutex::new(child));
-    *state.agent.lock().await = Some(AgentHandle {
+    let handle = Arc::new(Mutex::new(AgentHandle {
         child: child.clone(),
         stdin,
         pid,
         _workspace_extension: workspace_extension,
-    });
+    }));
+    {
+        let mut agents = state.agents.lock().await;
+        if state.shutting_down.load(Ordering::SeqCst) {
+            drop(agents);
+            stop_handle(handle).await?;
+            return Err("Application is shutting down".into());
+        }
+        agents.insert(generation, handle);
+    }
 
     let _ = app.emit(
         "omp://process",
@@ -175,13 +182,31 @@ pub async fn start(
     Ok(info)
 }
 
-/// Stop the running child, closing stdin first so omp can shut down cleanly.
-pub async fn stop(state: &AgentState) -> Result<(), String> {
-    let handle = state.agent.lock().await.take();
-    let Some(mut handle) = handle else {
-        return Ok(());
-    };
+/// Remove only the requested child before performing its potentially slow shutdown.
+pub async fn stop(state: &AgentState, generation: u64) -> Result<(), String> {
+    let handle = state.agents.lock().await.remove(&generation);
+    match handle {
+        Some(handle) => stop_handle(handle).await,
+        None => Ok(()),
+    }
+}
 
+/// Prevent new registrations and stop every owned child on application exit.
+pub async fn stop_all(state: &AgentState) {
+    let handles = {
+        let mut agents = state.agents.lock().await;
+        state.shutting_down.store(true, Ordering::SeqCst);
+        agents.drain().map(|(_, handle)| handle).collect::<Vec<_>>()
+    };
+    let mut stops = tokio::task::JoinSet::new();
+    for handle in handles {
+        stops.spawn(stop_handle(handle));
+    }
+    while stops.join_next().await.is_some() {}
+}
+
+async fn stop_handle(handle: Arc<Mutex<AgentHandle>>) -> Result<(), String> {
+    let mut handle = handle.lock().await;
     // Dropping stdin makes the agent drain accepted commands and exit 0.
     drop(handle.stdin.take());
     let mut child = handle.child.lock().await;
@@ -199,7 +224,7 @@ pub async fn stop(state: &AgentState) -> Result<(), String> {
 }
 
 /// Write one JSON command to the agent's stdin.
-pub async fn send(state: &AgentState, command: Value) -> Result<(), String> {
+pub async fn send(state: &AgentState, generation: u64, command: Value) -> Result<(), String> {
     if !command.is_object() {
         return Err("RPC command must be a JSON object".into());
     }
@@ -210,8 +235,9 @@ pub async fn send(state: &AgentState, command: Value) -> Result<(), String> {
     }
     line.push('\n');
 
-    let mut guard = state.agent.lock().await;
-    let handle = guard.as_mut().ok_or("Agent is not running")?;
+    let handle = state.agents.lock().await.get(&generation).cloned()
+        .ok_or("Agent is not running")?;
+    let mut handle = handle.lock().await;
     let stdin = handle.stdin.as_mut().ok_or("Agent stdin is closed")?;
     stdin
         .write_all(line.as_bytes())
@@ -366,4 +392,74 @@ fn kill_tree(pid: u32) {
     let _ = std::process::Command::new("kill")
         .args(["-TERM", &pid.to_string()])
         .status();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::AsyncReadExt;
+
+    async fn echo_agent(state: &AgentState) -> (u64, tokio::process::ChildStdout) {
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("cmd");
+            command.args(["/D", "/Q", "/C", "findstr ."]);
+            command
+        };
+        #[cfg(not(windows))]
+        let mut command = Command::new("cat");
+        let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped())
+            .stderr(Stdio::null()).kill_on_drop(true).spawn().unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let generation = state.next_generation();
+        let handle = AgentHandle {
+            stdin: child.stdin.take(),
+            pid: child.id().unwrap(),
+            child: Arc::new(Mutex::new(child)),
+            _workspace_extension: WorkspaceExtension::create().unwrap(),
+        };
+        state.agents.lock().await.insert(generation, Arc::new(Mutex::new(handle)));
+        (generation, stdout)
+    }
+
+    async fn output(mut stdout: tokio::process::ChildStdout) -> Vec<Value> {
+        let mut text = String::new();
+        tokio::time::timeout(Duration::from_secs(5), stdout.read_to_string(&mut text))
+            .await.unwrap().unwrap();
+        text.lines().map(|line| serde_json::from_str(line).unwrap()).collect()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn routes_commands_and_stops_only_the_requested_generation() {
+        let state = AgentState::default();
+        let (first, first_stdout) = echo_agent(&state).await;
+        let (second, second_stdout) = echo_agent(&state).await;
+        assert_ne!(first, second);
+        let first_command = serde_json::json!({ "type": "first" });
+        let second_command = serde_json::json!({ "type": "second" });
+        let after_stop = serde_json::json!({ "type": "still-running" });
+        send(&state, first, first_command.clone()).await.unwrap();
+        send(&state, second, second_command.clone()).await.unwrap();
+        stop(&state, first).await.unwrap();
+        assert_eq!(output(first_stdout).await, vec![first_command]);
+        assert!(send(&state, first, serde_json::json!({ "type": "stale" })).await.is_err());
+        stop(&state, first).await.unwrap();
+        send(&state, second, after_stop.clone()).await.unwrap();
+        stop(&state, second).await.unwrap();
+        assert_eq!(output(second_stdout).await, vec![second_command, after_stop]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn shutdown_closes_every_registered_child() {
+        let state = AgentState::default();
+        let (first, first_stdout) = echo_agent(&state).await;
+        let (second, second_stdout) = echo_agent(&state).await;
+        stop_all(&state).await;
+        assert!(state.agents.lock().await.is_empty());
+        assert!(state.shutting_down.load(Ordering::SeqCst));
+        assert!(output(first_stdout).await.is_empty());
+        assert!(output(second_stdout).await.is_empty());
+        assert!(send(&state, first, serde_json::json!({ "type": "stale" })).await.is_err());
+        assert!(send(&state, second, serde_json::json!({ "type": "stale" })).await.is_err());
+    }
 }

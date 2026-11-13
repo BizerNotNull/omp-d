@@ -15,7 +15,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { useAppStore, loadPreferences, type Preferences } from "@/lib/omp/store";
-import { omp } from "@/lib/omp/client";
 import { cn } from "@/lib/utils";
 import { NativeSettings } from "./NativeSettings";
 
@@ -26,6 +25,7 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
   const cwd = useAppStore((state) => state.cwd);
   const session = useAppStore((state) => state.session);
   const startInfo = useAppStore((state) => state.startInfo);
+  const protocolVersion = useAppStore((state) => state.protocolVersion);
   const diagnostics = useAppStore((state) => state.diagnostics);
   const disconnect = useAppStore((state) => state.disconnect);
   const [draft, setDraft] = useState<Preferences>(preferences);
@@ -163,7 +163,7 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
               <div className="flex min-w-0 items-baseline gap-4">
                 <span className="shrink-0">protocol</span>
                 <span className="min-w-0 flex-1 truncate text-right text-foreground/80">
-                  {omp.ready ? `v${omp.ready.protocolVersion} → v2 frames` : "—"}
+                  {protocolVersion !== undefined ? `v${protocolVersion} → v2 frames` : "—"}
                 </span>
               </div>
               <div className="flex min-w-0 items-baseline gap-4">

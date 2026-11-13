@@ -1,8 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { create } from "zustand";
-import { omp, RpcFailure, type OmpClientEvent } from "./client";
+import { create, type StoreApi, type UseBoundStore } from "zustand";
+import { OmpClient, RpcFailure, type OmpClientEvent } from "./client";
 import { catalogCacheKey, readCatalog, splitExtraArgs, writeCatalog } from "./model-catalog";
 import { projectMessageBranches, sessionTreeFromEntries, type MessageBranch } from "./branches";
 import type {
@@ -100,8 +100,27 @@ export interface PendingMessage {
 
 export type ConnectionStatus = "idle" | "starting" | "ready" | "error" | "stopped";
 
+
+interface OpenSession {
+  id: number;
+  path?: string;
+  cwd?: string;
+  title: string;
+  busy: boolean;
+  dialogs: number;
+  status: ConnectionStatus;
+}
+
 interface AppState {
   initialized: boolean;
+  activeRuntimeId: number;
+  openSessions: OpenSession[];
+  protocolVersion?: number;
+  selectRuntime: (id: number) => void;
+  draftText: string;
+  draftImages: ImageContent[];
+  setDraftText: (text: string) => void;
+  setDraftImages: (images: ImageContent[] | ((current: ImageContent[]) => ImageContent[])) => void;
   status: ConnectionStatus;
   error?: string;
   cwd?: string;
@@ -139,9 +158,7 @@ interface AppState {
   statusMarks: Record<string, string>;
   widgets: Record<string, string[]>;
   diagnostics: string[];
-  editorText?: string;
   editorToken: number;
-  editorImages?: ImageContent[];
 
   bootstrap: () => Promise<void>;
   connect: (cwd: string, prefs?: Partial<Preferences>) => Promise<void>;
@@ -184,6 +201,8 @@ interface AppState {
 let toastSeq = 0;
 let noticeSeq = 0;
 let initialized = false;
+function createRuntimeStore(id: number, initialSessionPath?: string) {
+const omp = new OmpClient();
 let connectTicket = 0;
 let catalogRequest = 0;
 let sessionsRequest = 0;
@@ -223,8 +242,15 @@ function describeError(error: unknown): string {
   return String(error);
 }
 
-export const useAppStore = create<AppState>()((set, get) => ({
-  initialized: false,
+const runtime = create<AppState>()((set, get) => ({
+  initialized: true,
+  activeRuntimeId: id,
+  openSessions: [],
+  selectRuntime,
+  draftText: "",
+  draftImages: [],
+  setDraftText: (draftText) => set({ draftText }),
+  setDraftImages: (images) => set((state) => ({ draftImages: typeof images === "function" ? images(state.draftImages) : images })),
   status: "idle",
   preferences: loadPreferences(),
 
@@ -257,7 +283,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
     if (initialized) return;
     initialized = true;
     set({ initialized: true });
-    omp.on((event) => useAppStore.getState().handleEvent(event));
+    // Each runtime subscribes at construction, including while it is hidden.
     const cwd = localStorage.getItem(LAST_CWD_KEY);
     if (!cwd) {
       const initial = await invoke<string | null>("initial_folder");
@@ -304,6 +330,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
       gitStatus: undefined,
       gitStatusError: undefined,
     });
+    set({ busy: false, queue: { steering: [], followUp: [] }, startInfo: undefined, protocolVersion: undefined });
     savePreferences(preferences);
     try {
       const extraArgs = splitExtraArgs(preferences.extraArgs);
@@ -314,10 +341,16 @@ export const useAppStore = create<AppState>()((set, get) => ({
         extraArgs,
       });
       if (ticket !== connectTicket) return;
-      localStorage.setItem(LAST_CWD_KEY, cwd);
-      set({ status: "ready", startInfo: info, cwd: info.cwd });
+      if (activeRuntime === runtime) localStorage.setItem(LAST_CWD_KEY, info.cwd);
+      set({ startInfo: info, cwd: info.cwd });
       void get().fetchModels();
       await omp.send({ type: "set_ask_dialog", enabled: true }).catch(() => {});
+      if (initialSessionPath) {
+        const response = await omp.send<{ cancelled: boolean }>({ type: "switch_session", sessionPath: initialSessionPath });
+        if (response.data?.cancelled) throw new Error("Session switch was cancelled.");
+        initialSessionPath = undefined;
+      }
+      set({ status: "ready" });
       await get().refreshAll();
       if (ticket !== connectTicket) return;
       await get().loadSessions();
@@ -329,18 +362,10 @@ export const useAppStore = create<AppState>()((set, get) => ({
 
   restart: async () => {
     const cwd = get().cwd;
-    const previousSession = get().session?.sessionFile;
+    const previousSession = get().session?.sessionFile ?? initialSessionPath;
     if (!cwd) return;
+    initialSessionPath = previousSession;
     await get().connect(cwd);
-    if (previousSession) {
-      try {
-        await omp.send({ type: "switch_session", sessionPath: previousSession });
-        await get().refreshAll();
-        await get().loadSessions();
-      } catch (error) {
-        pushToast(set, "warning", `Could not reopen the previous session: ${describeError(error)}`);
-      }
-    }
   },
 
   disconnect: async () => {
@@ -354,6 +379,9 @@ export const useAppStore = create<AppState>()((set, get) => ({
     const preferences = { ...get().preferences, ...partial };
     savePreferences(preferences);
     set({ preferences });
+    for (const entry of runtimes.values()) {
+      if (entry.store !== runtime) entry.store.setState({ preferences });
+    }
     const cwd = get().cwd;
     if (cwd && catalogCacheKey(cwd, previous) !== catalogCacheKey(cwd, preferences)) {
       ++catalogRequest;
@@ -365,7 +393,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   openProjectDialog: async () => {
     const selected = await openDialog({ directory: true, multiple: false, title: "Open a project folder" });
     if (typeof selected === "string" && selected) {
-      await get().connect(selected);
+      await openRuntime(selected);
     }
   },
 
@@ -413,7 +441,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
         busy: Boolean(session?.isStreaming ?? current.busy),
         toolRuns: transcript ? {} : current.toolRuns,
       }));
-      if (session?.sessionName) document.title = `${session.sessionName} — omp-d`;
+      if (session?.sessionName) setTitle(`${session.sessionName} — omp-d`);
     } catch (error) {
       if (omp.generation === generation && get().status === "ready") {
         pushToast(set, "warning", describeError(error));
@@ -484,7 +512,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
       if (!current()) return;
       await syncSessionWorkspace(set, current);
       if (!current()) return;
-      document.title = session.sessionName ? `${stripPrivateUse(session.sessionName)} — omp-d` : "omp-d — Oh My Pi";
+      setTitle(session.sessionName ? `${stripPrivateUse(session.sessionName)} — omp-d` : "omp-d — Oh My Pi");
       set((state) => ({
         session,
         busy: Boolean(session.isStreaming),
@@ -659,66 +687,22 @@ export const useAppStore = create<AppState>()((set, get) => ({
   },
 
   newSession: async () => {
-    if (get().branching) return;
-    try {
-      const res = await omp.send<{ cancelled: boolean }>({ type: "new_session" });
-      if (res.data?.cancelled) {
-        pushToast(set, "warning", "Session change was cancelled by an extension.");
-        return;
-      }
-      ++conversationRevision;
-      set({
-        messages: [],
-        messageKeys: new Set<string>(),
-        sessionTree: undefined,
-        messageBranches: [],
-        pending: [],
-        toolRuns: {},
-        notices: [],
-        stats: undefined,
-        dialogs: [],
-        statusMarks: {},
-        widgets: {},
-      });
-      await get().refreshAll();
-      await get().loadSessions();
-    } catch (error) {
-      pushToast(set, "error", describeError(error));
-    }
+    const { cwd, branching, status } = get();
+    if (!cwd || branching || status !== "ready") return;
+    await openRuntime(cwd);
   },
 
   switchSession: async (path) => {
     if (get().branching) return;
-    try {
-      const directory = get().sessionListing?.directories.find((entry) => entry.sessions.some((session) => session.path === path));
-      if (directory && directory.cwd !== get().cwd) {
-        await get().connect(directory.cwd);
-        if (get().status !== "ready" || get().cwd !== directory.cwd) return;
-      }
-      const res = await omp.send<{ cancelled: boolean }>({ type: "switch_session", sessionPath: path });
-      if (res.data?.cancelled) {
-        pushToast(set, "warning", "Session switch was cancelled.");
-        return;
-      }
-      ++conversationRevision;
-      set({
-        messages: [],
-        messageKeys: new Set<string>(),
-        sessionTree: undefined,
-        messageBranches: [],
-        pending: [],
-        toolRuns: {},
-        notices: [],
-        stats: undefined,
-        dialogs: [],
-        statusMarks: {},
-        widgets: {},
-      });
-      await get().refreshAll();
-      await get().loadSessions();
-    } catch (error) {
-      pushToast(set, "error", describeError(error));
+    const existing = [...runtimes.values()].find((entry) =>
+      sessionPathKey(entry.store.getState().session?.sessionFile ?? entry.path) === sessionPathKey(path));
+    if (existing) {
+      selectRuntime(existing.store.getState().activeRuntimeId);
+      return;
     }
+    const directory = get().sessionListing?.directories.find((entry) => entry.sessions.some((session) => session.path === path));
+    const cwd = directory?.cwd ?? get().cwd;
+    if (cwd) await openRuntime(cwd, path);
   },
 
   renameSession: async (name) => {
@@ -802,7 +786,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
 
   dismissToast: (id) => set((state) => ({ notifications: state.notifications.filter((toast) => toast.id !== id) })),
 
-  setEditorText: (text) => set((state) => ({ editorText: text, editorImages: undefined, editorToken: state.editorToken + 1 })),
+  setEditorText: (text) => set((state) => ({ draftText: text, draftImages: [], editorToken: state.editorToken + 1 })),
 
   applyFrame: (frame) => {
     switch (frame.type) {
@@ -979,7 +963,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
         get().applyFrame(event.frame);
         return;
       case "ready":
-        set({ status: "ready" });
+        set({ protocolVersion: event.ready.protocolVersion });
         return;
       case "disconnected":
         ++catalogRequest;
@@ -1068,7 +1052,7 @@ async function navigateConversation(
         }
         nodes.push(...node.children);
       }
-      set((value) => ({ editorText: response.data!.editorText, editorImages: images, editorToken: value.editorToken + 1 }));
+      set((value) => ({ draftText: response.data!.editorText ?? "", draftImages: images, editorToken: value.editorToken + 1 }));
     }
     await get().refreshAll();
     return current();
@@ -1076,7 +1060,7 @@ async function navigateConversation(
     if (current()) {
       set({ busy: false });
       if (moved && draft) {
-        set((value) => ({ editorText: draft.text, editorImages: draft.images, editorToken: value.editorToken + 1 }));
+        set((value) => ({ draftText: draft.text, draftImages: draft.images, editorToken: value.editorToken + 1 }));
       }
       pushToast(set, "error", `Conversation branch failed: ${describeError(error)}`);
       if (moved) await get().refreshAll();
@@ -1159,7 +1143,7 @@ function handleExtensionRequest(request: ExtensionUIRequest, set: SetState, get:
         if (!cwd || cwd === get().cwd) return;
         ++sessionsRequest;
         ++catalogRequest;
-        localStorage.setItem(LAST_CWD_KEY, cwd);
+        if (activeRuntime === runtime) localStorage.setItem(LAST_CWD_KEY, cwd);
         set({
           cwd,
           sessionListing: undefined,
@@ -1193,7 +1177,7 @@ function handleExtensionRequest(request: ExtensionUIRequest, set: SetState, get:
       return;
     }
     case "setTitle":
-      document.title = `${request.title} — omp-d`;
+      setTitle(`${request.title} — omp-d`);
       return;
     case "set_editor_text":
       get().setEditorText(request.text);
@@ -1214,6 +1198,73 @@ function handleExtensionRequest(request: ExtensionUIRequest, set: SetState, get:
     default:
       return;
   }
+}
+
+function setTitle(title: string) {
+  if (activeRuntime === runtime) document.title = title;
+}
+
+omp.on((event) => runtime.getState().handleEvent(event));
+return runtime;
+}
+
+type RuntimeStore = UseBoundStore<StoreApi<AppState>>;
+const runtimes = new Map<number, { store: RuntimeStore; path?: string }>();
+let runtimeSequence = 0;
+let activeRuntime = createRuntimeStore(++runtimeSequence);
+runtimes.set(runtimeSequence, { store: activeRuntime });
+
+// React subscribes to a stable facade. Async actions retain their originating
+// store/client, so completion in a hidden session never mutates the selected one.
+export const useAppStore = create<AppState>()(() => activeRuntime.getState());
+
+function publishRuntimes() {
+  const openSessions = [...runtimes].map(([id, { store, path }]): OpenSession => {
+    const state = store.getState();
+    return {
+      id,
+      path: state.session?.sessionFile ?? path,
+      cwd: state.cwd,
+      title: sessionTitle(state.session),
+      busy: state.busy,
+      dialogs: state.dialogs.length,
+      status: state.status,
+    };
+  });
+  useAppStore.setState({ ...activeRuntime.getState(), openSessions }, true);
+}
+
+activeRuntime.subscribe(publishRuntimes);
+
+function selectRuntime(id: number) {
+  const entry = runtimes.get(id);
+  if (!entry) return;
+  activeRuntime = entry.store;
+  publishRuntimes();
+  const state = activeRuntime.getState();
+  document.title = `${sessionTitle(state.session)} — omp-d`;
+  if (state.cwd) localStorage.setItem(LAST_CWD_KEY, state.cwd);
+  void state.loadSessions();
+}
+
+async function openRuntime(cwd: string, path?: string) {
+  if (!path && !activeRuntime.getState().cwd && activeRuntime.getState().status === "idle") {
+    await activeRuntime.getState().connect(cwd);
+    return;
+  }
+  const id = ++runtimeSequence;
+  const store = createRuntimeStore(id, path);
+  store.setState({ preferences: activeRuntime.getState().preferences });
+  runtimes.set(id, { store, path });
+  store.subscribe(publishRuntimes);
+  selectRuntime(id);
+  await store.getState().connect(cwd);
+}
+
+function sessionPathKey(path: string | undefined) {
+  if (!path) return undefined;
+  const normalized = path.replace(/\\/g, "/");
+  return /^[a-z]:\//i.test(normalized) ? normalized.toLowerCase() : normalized;
 }
 
 /* --------------------------------------------------------------- utilities */

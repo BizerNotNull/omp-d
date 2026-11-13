@@ -29,10 +29,10 @@ children; it asks the supervisor to start, send to, or stop them.
 
 1. `AppShell` calls `bootstrap()` once. `bootstrap` reads `ompd:lastCwd`, or the
    `OMPD_CWD` fallback through `initial_folder`, then calls `connect(cwd)`.
-2. `OmpClient.start` invokes `start_agent` with `cwd`, optional `model`, optional
+2. Each open session has its own `OmpClient` and isolated Zustand store.
+   `OmpClient.start` invokes `start_agent` with `cwd`, optional `model`, optional
    binary override and extra CLI arguments. Rust canonicalizes the path, strips
-   the Windows `\\?\` prefix, serializes start calls behind `start_lock`, stops
-   any previous child, then spawns:
+   the Windows `\\?\` prefix, then spawns an independent child:
 
    ```
    omp --mode rpc-ui --cwd <path> [--model <model>] [extra…]
@@ -207,21 +207,29 @@ prompt (matching the interactive picker).
 Git, then returns a `SessionListing` with a separate session list per directory.
 The sidebar keeps the main directory first and nests worktree directories with
 branch icons. Each directory keeps up to 40 sessions, newest first; non-Git
-folders retain a single directory group. Selecting a session in another
-directory first connects the agent in that workspace, then reopens the selected
-file with `switch_session`; the RPC runtime cannot rebind cwd through that
-command alone.
+folders retain a single directory group. Selecting a saved session reuses its
+open runtime, or starts another child in that directory and opens the file
+with `switch_session`. It never sends a switch command to another session's
+running child.
 
-- New session: `new_session`, then clear local transcript/dialog/session state
-  and rehydrate.
-- Switch: `switch_session(sessionPath)`, same clearing, same rehydration.
+- New session: start an independent runtime in the selected workspace.
+- Switch: select the existing runtime/store; hidden sessions keep processing
+  frames, queued messages, tools and dialogs. The stable React store facade
+  publishes only the selected store's state. Async actions retain their original
+  store/client even when selection changes.
+- Open sessions remain accessible across workspaces, including empty sessions.
+  Sidebar spinners track background activity; Needs input identifies pending
+  extension dialogs. Dialog responses and composer drafts belong to one runtime.
+- Native sends and stops require the owning process generation. Each client's
+  lifecycle is serialized; all event channels filter by that generation,
+  including events received before the start invoke resolves.
+- Stop/restart affects the selected runtime only. App exit stops every child.
 - Rename: `set_session_name`, then refresh state and the bucket list.
 - First prompt auto-title: if the session has no name and no messages, the first
   prompt text (first line, 64 chars) is sent as `set_session_name` after the
   prompt is acknowledged.
-- Restart: `restart()` re-spawns via `connect`, then reopens the remembered
-  `sessionFile` with `switch_session`, so the conversation survives settings
-  changes, crashes and manual restarts.
+- Restart: `restart()` re-spawns only that runtime via `connect`, then reopens
+  its remembered `sessionFile` with `switch_session`.
 - Runtime relocation (`/wt`, `/move`): both `config_update` and local
   `prompt_result` completion trigger reconciliation. State refreshes query the
   bundled `/ompd-workspace` extension command without relying on session-file

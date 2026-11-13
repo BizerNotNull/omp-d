@@ -13,12 +13,12 @@ import {
   imageBlocks,
   isUserVisible,
   messagePlainText,
-  toBase64DataUrl,
   toolCalls,
 } from "@/lib/omp/format";
 import { cn } from "@/lib/utils";
 import { Markdown } from "./Markdown";
 import { ToolCard } from "./ToolCard";
+import { ContentImage } from "./ContentImage";
 
 function isToolResult(message: AgentMessage): message is ToolResultMessage {
   return message.role === "toolResult";
@@ -175,12 +175,7 @@ function UserBubble({ message, branch, disabled }: { message: AgentMessage; bran
       {images.length > 0 && (
         <div className="flex flex-wrap justify-end gap-2">
           {images.map((image, index) => (
-            <img
-              key={index}
-              src={toBase64DataUrl(image)}
-              alt="attachment"
-              className="max-h-48 rounded-lg border object-contain"
-            />
+            <ContentImage key={index} image={image} alt="attachment" />
           ))}
         </div>
       )}
@@ -270,15 +265,7 @@ function AssistantBlock({
           if (block.type === "text") {
             const text = "text" in block && typeof block.text === "string" ? block.text : "";
             if (!text) return null;
-            if (streaming) {
-              return (
-                <div key={index} className="text-[13.5px] leading-relaxed break-words whitespace-pre-wrap">
-                  {text}
-                  <span className="stream-caret" />
-                </div>
-              );
-            }
-            return <Markdown key={index} text={text} />;
+            return <Markdown key={index} text={text} streaming={streaming} />;
           }
           if (block.type === "thinking") {
             const thinking = block as ThinkingContent;
@@ -291,12 +278,7 @@ function AssistantBlock({
           const [image] = imageBlocks([block]);
           if (image) {
             return (
-              <img
-                key={index}
-                src={toBase64DataUrl(image)}
-                alt="assistant output"
-                className="my-2 max-h-80 rounded-lg border object-contain"
-              />
+              <ContentImage key={index} image={image} alt="assistant output" />
             );
           }
           return null;
@@ -354,6 +336,7 @@ function SystemNote({ message }: { message: AgentMessage }) {
   const role = message.role;
   if (role === "custom" && message.display === false) return null;
   const text = contentText(message.content) || messagePlainText(message);
+  const images = imageBlocks(message.content);
   const customType = typeof message.customType === "string" ? message.customType : undefined;
   const label =
     role === "compactionSummary"
@@ -365,7 +348,7 @@ function SystemNote({ message }: { message: AgentMessage }) {
           : role === "pythonExecution"
             ? "Python"
             : customType ?? role;
-  if (!text && role !== "compactionSummary") return null;
+  if (!text && images.length === 0 && role !== "compactionSummary") return null;
 
   if (role === "bashExecution" || role === "pythonExecution") {
     return (
@@ -399,6 +382,7 @@ function SystemNote({ message }: { message: AgentMessage }) {
             <Sparkles className="size-3" /> {firstLine(label, 40)}
           </div>
           {text && <div className="text-xs break-words whitespace-pre-wrap text-foreground/80">{text}</div>}
+          {images.map((image, index) => <ContentImage key={index} image={image} alt="message image" />)}
         </div>
       </div>
     );

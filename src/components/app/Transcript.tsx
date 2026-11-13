@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Archive, Brain, ChevronDown, ChevronLeft, ChevronRight, Pencil, Scissors, Sparkles, SquareTerminal, User } from "lucide-react";
+import { Archive, Brain, ChevronDown, ChevronLeft, ChevronRight, LoaderCircle, Pencil, Scissors, Sparkles, SquareTerminal, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import type { MessageBranch } from "@/lib/omp/branches";
@@ -54,6 +54,9 @@ function SessionTranscript({
   const controlsDisabled = busy || branching || treeLoading || status !== "ready" || Boolean(pendingAsyncWork)
     || queue.steering.length > 0 || queue.followUp.length > 0;
   const all = [...messages, ...pending.map((entry) => entry.message)];
+  const waitingForMessage = busy
+    && !pending.some((entry) => isAssistant(entry.message))
+    && !Object.values(toolRuns).some((run) => run.status === "running");
 
   const results = new Map<string, ToolResultMessage>();
   const callIds = new Set<string>();
@@ -88,7 +91,21 @@ function SessionTranscript({
     return <SystemNote key={key} message={message} />;
   });
 
-  return <div className="flex flex-col gap-1">{items}</div>;
+  return (
+    <div className="flex flex-col gap-1">
+      {items}
+      {waitingForMessage && <div className="py-2 pl-10"><InferenceSpinner /></div>}
+    </div>
+  );
+}
+
+function InferenceSpinner() {
+  return (
+    <div role="status" className="flex items-center gap-2 py-1 text-xs text-muted-foreground">
+      <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin" />
+      Thinking…
+    </div>
+  );
 }
 
 function BranchControls({ branch, disabled }: { branch: MessageBranch; disabled: boolean }) {
@@ -228,9 +245,11 @@ function AssistantBlock({
   streaming: boolean;
 }) {
   const blocks = Array.isArray(message.content) ? message.content : [];
-  const hasVisible = blocks.some(
-    (block) => block.type === "text" || block.type === "thinking" || block.type === "toolCall",
-  );
+  const hasVisible = blocks.some((block) => {
+    if (block.type === "text") return "text" in block && Boolean(block.text);
+    if (block.type === "thinking") return "thinking" in block && Boolean(block.thinking);
+    return block.type === "toolCall" || block.type === "image";
+  });
   const hasProse = blocks.some(
     (block) =>
       (block.type === "text" && "text" in block && String(block.text ?? "").trim()) ||
@@ -245,16 +264,7 @@ function AssistantBlock({
         π
       </div>
       <div className="min-w-0 flex-1">
-        {!hasVisible && streaming && (
-          <div className="flex items-center gap-2 py-1 text-xs text-muted-foreground">
-            <span className="inline-flex gap-1">
-              <span className="dot-bounce size-1.5 rounded-full bg-current" />
-              <span className="dot-bounce size-1.5 rounded-full bg-current [animation-delay:120ms]" />
-              <span className="dot-bounce size-1.5 rounded-full bg-current [animation-delay:240ms]" />
-            </span>
-            Thinking…
-          </div>
-        )}
+        {!hasVisible && !error && streaming && <InferenceSpinner />}
 
         {blocks.map((block, index) => {
           if (block.type === "text") {

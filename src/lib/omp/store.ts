@@ -25,6 +25,9 @@ import type {
   SessionTree,
   SessionEntries,
   StartInfo,
+  SubagentSnapshot,
+  SubagentProgress,
+  SubagentMessagesResult,
   TodoPhase,
 } from "./types";
 import { firstLine, imageBlocks, modelLabel, stripPrivateUse } from "./format";
@@ -139,6 +142,11 @@ interface AppState {
   messageKeys: Set<string>;
   pending: PendingMessage[];
   toolRuns: Record<string, ToolRun>;
+  subagents: Record<string, SubagentSnapshot>;
+  subagentsAvailable?: boolean;
+  subagentMessages: Record<string, AgentMessage[]>;
+  refreshSubagents: () => Promise<void>;
+  refreshSubagentMessages: (id: string) => Promise<void>;
   queue: { steering: string[]; followUp: string[]; liveSteered?: number };
   busy: boolean;
   sessionTree?: SessionTree;
@@ -218,6 +226,10 @@ let conversationRevision = 0;
 let treeRequest = 0;
 let treeWarningGeneration: number | undefined;
 let workspaceQuerySeq = 0;
+let subagentSubscriptionGeneration: number | undefined;
+let subagentRefresh: Promise<void> | undefined;
+let subagentEventRevision = 0;
+const subagentMessageRequests = new Map<string, number>();
 
 function messageKey(message: AgentMessage): string {
   const timestamp = typeof message.timestamp === "number" ? message.timestamp : 0;
@@ -263,6 +275,8 @@ const runtime = create<AppState>()((set, get) => ({
   messageKeys: new Set<string>(),
   pending: [],
   toolRuns: {},
+  subagents: {},
+  subagentMessages: {},
   queue: { steering: [], followUp: [] },
   busy: false,
   messageBranches: [],
@@ -321,6 +335,8 @@ const runtime = create<AppState>()((set, get) => ({
   connect: async (cwd, prefs) => {
     const ticket = ++connectTicket;
     ++conversationRevision;
+    subagentRefresh = undefined;
+    subagentSubscriptionGeneration = undefined;
     runtimeModifiedTimes.set(id, initialSessionPath ? 0 : Date.now());
     const entry = runtimes.get(id);
     if (entry && initialSessionPath) entry.path = initialSessionPath;
@@ -338,6 +354,9 @@ const runtime = create<AppState>()((set, get) => ({
       messageKeys: new Set<string>(),
       pending: [],
       toolRuns: {},
+      subagents: {},
+      subagentMessages: {},
+      subagentsAvailable: undefined,
       sessionTree: undefined,
       messageBranches: [],
       treeLoading: false,
@@ -392,7 +411,7 @@ const runtime = create<AppState>()((set, get) => ({
   disconnect: async () => {
     ++connectTicket;
     await omp.stop();
-    set({ status: "stopped", busy: false, branching: false, treeLoading: false, queue: { steering: [], followUp: [] }, modelsLoading: false, sessionsLoading: false });
+    set({ status: "stopped", subagents: {}, subagentMessages: {}, subagentsAvailable: undefined, busy: false, branching: false, treeLoading: false, queue: { steering: [], followUp: [] }, modelsLoading: false, sessionsLoading: false });
   },
 
   updatePreferences: (partial) => {
@@ -418,6 +437,62 @@ const runtime = create<AppState>()((set, get) => ({
     }
   },
 
+  refreshSubagents: async () => {
+    if (get().status !== "ready" || get().subagentsAvailable === false) return;
+    if (subagentRefresh) return subagentRefresh;
+    const generation = omp.generation;
+    const revision = conversationRevision;
+    const current = () => generation === omp.generation && revision === conversationRevision && get().status === "ready";
+    const refresh = async () => {
+      try {
+        if (subagentSubscriptionGeneration !== generation) {
+          await omp.send({ type: "set_subagent_subscription", level: "progress" });
+          if (!current()) return;
+          subagentSubscriptionGeneration = generation;
+        }
+        const eventRevision = subagentEventRevision;
+        const response = await omp.send<{ subagents: SubagentSnapshot[] }>({ type: "get_subagents" });
+        if (!current()) return;
+        set((state) => {
+          const subagents = { ...state.subagents };
+          // Events observed during the query are newer than its snapshot.
+          if (eventRevision === subagentEventRevision) {
+            for (const agent of response.data?.subagents ?? []) subagents[agent.id] = agent;
+          }
+          return { subagents, subagentsAvailable: true };
+        });
+      } catch {
+        // Optional RPC capability: older omp versions must not show startup errors.
+        if (current()) set({ subagentsAvailable: false });
+      }
+    };
+    const pending = refresh();
+    subagentRefresh = pending;
+    try { await pending; } finally { if (subagentRefresh === pending) subagentRefresh = undefined; }
+  },
+
+  refreshSubagentMessages: async (subagentId) => {
+    if (get().subagentsAvailable !== true || get().status !== "ready") return;
+    const generation = omp.generation;
+    const revision = conversationRevision;
+    const request = (subagentMessageRequests.get(subagentId) ?? 0) + 1;
+    subagentMessageRequests.set(subagentId, request);
+    try {
+      const sessionFile = get().subagents[subagentId]?.sessionFile;
+      const response = await omp.send<SubagentMessagesResult>({
+        type: "get_subagent_messages",
+        ...(sessionFile ? { sessionFile } : { subagentId }),
+      });
+      if (generation !== omp.generation || revision !== conversationRevision || get().status !== "ready"
+        || subagentMessageRequests.get(subagentId) !== request) return;
+      if (response.data) set((state) => ({
+        subagentMessages: { ...state.subagentMessages, [subagentId]: response.data!.messages },
+      }));
+    } catch {
+      // A historical/removed agent may no longer have an available transcript.
+    }
+  },
+
   refreshAll: async () => {
     if (refreshing) {
       refreshAgain = true;
@@ -429,6 +504,7 @@ const runtime = create<AppState>()((set, get) => ({
     const generation = omp.generation;
     const revision = conversationRevision;
     void get().refreshTree();
+    void get().refreshSubagents();
     try {
       const [state, messages, stats, levels, commands] = await Promise.all([
         omp.send<RpcSessionState>({ type: "get_state" }).catch(() => undefined),
@@ -812,6 +888,55 @@ const runtime = create<AppState>()((set, get) => ({
       runtimeModifiedTimes.set(id, Date.now());
     }
     switch (frame.type) {
+      case "subagent_lifecycle": {
+        const payload = frame.payload;
+        if (!isRecord(payload) || typeof payload.id !== "string" || typeof payload.agent !== "string"
+          || typeof payload.index !== "number") return;
+        const status = payload.status === "started" ? "running" : payload.status;
+        if (status !== "running" && status !== "completed" && status !== "failed" && status !== "aborted") return;
+        ++subagentEventRevision;
+        set((state) => ({
+          subagentsAvailable: true,
+          subagents: { ...state.subagents, [payload.id as string]: {
+            ...state.subagents[payload.id as string],
+            id: payload.id as string,
+            agent: payload.agent as string,
+            index: payload.index as number,
+            status,
+            description: typeof payload.description === "string" ? payload.description : state.subagents[payload.id as string]?.description,
+            sessionFile: typeof payload.sessionFile === "string" ? payload.sessionFile : state.subagents[payload.id as string]?.sessionFile,
+            parentToolCallId: typeof payload.parentToolCallId === "string" ? payload.parentToolCallId : state.subagents[payload.id as string]?.parentToolCallId,
+            lastUpdate: Date.now(),
+          } },
+        }));
+        return;
+      }
+      case "subagent_progress": {
+        const payload = frame.payload;
+        const progress = isRecord(payload) && isRecord(payload.progress) ? payload.progress : undefined;
+        if (!progress || typeof progress.id !== "string" || typeof progress.agent !== "string") return;
+        if (!["pending", "running", "completed", "failed", "aborted"].includes(String(progress.status))) return;
+        ++subagentEventRevision;
+        const agentProgress = progress as unknown as SubagentProgress;
+        set((state) => ({
+          subagentsAvailable: true,
+          subagents: { ...state.subagents, [agentProgress.id]: {
+            ...state.subagents[agentProgress.id],
+            id: agentProgress.id,
+            agent: agentProgress.agent,
+            index: agentProgress.index,
+            status: agentProgress.status,
+            description: agentProgress.description,
+            task: agentProgress.task,
+            assignment: agentProgress.assignment,
+            parentToolCallId: typeof (payload as Record<string, unknown>).parentToolCallId === "string"
+              ? (payload as Record<string, unknown>).parentToolCallId as string : state.subagents[agentProgress.id]?.parentToolCallId,
+            lastUpdate: Date.now(),
+            progress: agentProgress,
+          } },
+        }));
+        return;
+      }
       case "message_start": {
         const messageId = String(frame.messageId ?? "");
         const message = frame.message as AgentMessage | undefined;
@@ -989,7 +1114,7 @@ const runtime = create<AppState>()((set, get) => ({
         return;
       case "disconnected":
         ++catalogRequest;
-        set({ status: "stopped", busy: false, branching: false, treeLoading: false, error: event.reason, modelsLoading: false });
+        set({ status: "stopped", subagents: {}, subagentMessages: {}, subagentsAvailable: undefined, busy: false, branching: false, treeLoading: false, error: event.reason, modelsLoading: false });
         return;
       case "protocol":
         appendDiagnostic(set, `${event.event.kind}: ${event.event.message}`);
@@ -1001,7 +1126,7 @@ const runtime = create<AppState>()((set, get) => ({
       case "process":
         if (event.event.kind === "error") {
           ++catalogRequest;
-          set({ status: "error", error: event.event.message, busy: false, branching: false, treeLoading: false, modelsLoading: false });
+          set({ status: "error", subagents: {}, subagentMessages: {}, subagentsAvailable: undefined, error: event.event.message, busy: false, branching: false, treeLoading: false, modelsLoading: false });
         }
         return;
     }
@@ -1049,7 +1174,7 @@ async function navigateConversation(
       return false;
     }
     moved = true;
-    set({ pending: [], toolRuns: {}, notices: [], dialogs: [], statusMarks: {}, widgets: {}, messageBranches: [] });
+    set({ pending: [], toolRuns: {}, subagents: {}, subagentMessages: {}, notices: [], dialogs: [], statusMarks: {}, widgets: {}, messageBranches: [] });
     if (draft) {
       // Submit only after the runtime has moved to the edited message's parent.
       // Do not use prompt(): ordinary submissions stay locked during this transition.

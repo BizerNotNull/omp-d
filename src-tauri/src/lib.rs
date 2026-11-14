@@ -103,6 +103,16 @@ async fn git_status(cwd: String) -> Result<Option<git_status::GitStatus>, String
     git_status::status(cwd).await
 }
 
+#[tauri::command]
+async fn get_git_changes(cwd: String) -> Result<Option<git_status::GitChanges>, String> {
+    git_status::changes(cwd).await
+}
+
+#[tauri::command]
+async fn get_git_diff(cwd: String, path: String) -> Result<String, String> {
+    git_status::diff(cwd, path).await
+}
+
 /// Optional folder to open when no previous workspace is stored.
 #[tauri::command]
 fn initial_folder() -> Option<String> {
@@ -133,6 +143,8 @@ pub fn run() {
             list_sessions,
             sessions_root,
             git_status,
+            get_git_changes,
+            get_git_diff,
             terminal::terminal_create,
             terminal::terminal_write,
             terminal::terminal_resize,

@@ -3,16 +3,11 @@
 ## Unreleased
 
 ### Added
-- Unified session-first navigation across Worktrees: Recent, Running and Pinned views, global full-content search, searchable Worktree filtering, cursor-paginated virtualized history, cached pages and remembered scroll positions
-- Persist session/Worktree pins and last-opened conversations; restore each Worktree's session without changing the list when opening a conversation directly
-- Show the execution Worktree in the session header and composer, with target selection before the first message
+- Compact Inspector with unified execution/task progress, subscribed subagent activity, workspace detail views and a context/resource footer
+- Read-only Git file summaries and bounded diffs, with recorded-session file filtering and full working-tree scope
 
 ### Changed
-- Keep open sessions running in independent background runtimes when switching sessions, starting a new session, or opening another workspace, preserving streaming state, queues, dialogs and composer drafts
-
-### Removed
-- Group Recent Sessions under the main repository directory with nested linked-worktree directories marked by a branch icon
-- Use the pen beside the Recent repository name to start a new session; remove the separate New session button
+- Replace separate goal, TODO, running-tool and log panels with compact execution rows; move notices, widgets and resource details into workspace inspection views
 ## 0.1.0 — 2026-11-06
 
 Initial desktop client for Oh My Pi.

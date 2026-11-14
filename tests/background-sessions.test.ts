@@ -12,6 +12,7 @@ Object.assign(globalThis, {
   localStorage: {
     getItem: (key: string) => storage.get(key) ?? null,
     setItem: (key: string, value: string) => storage.set(key, value),
+    removeItem: (key: string) => storage.delete(key),
   },
 });
 
@@ -55,7 +56,7 @@ mock.module("@tauri-apps/api/core", () => ({
       case "get_state":
         respond({ sessionId: `session-${owner}`, sessionFile: `D:/sessions/${owner}.jsonl`, sessionName: `Session ${owner}`, isStreaming: owner === 1, messageCount: 1 });
         return;
-      case "get_messages": respond({ messages: [] }); return;
+      case "get_messages": respond({ messages: [{ role: "user", content: "Existing conversation", timestamp: 1 }] }); return;
       case "get_entries": respond({ entries: [], leafId: null }); return;
       case "get_available_thinking_levels": respond({ levels: [] }); return;
       case "get_available_commands": respond({ commands: [] }); return;

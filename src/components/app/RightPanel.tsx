@@ -1,221 +1,75 @@
-import { CheckCircle2, Circle, CircleDot, LoaderCircle, Target, XCircle } from "lucide-react";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Check, ChevronRight, Circle, CircleAlert, CircleDot, LoaderCircle, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useAppStore, activeTodos } from "@/lib/omp/store";
-import { formatCost, formatRelativeTime, formatTokens } from "@/lib/omp/format";
-import type { TodoItem } from "@/lib/omp/types";
+import { formatTokens } from "@/lib/omp/format";
+import type { ChangedFile, InspectorData, InspectorSelection } from "@/lib/omp/inspector-data";
 
-function TodoRow({ task }: { task: TodoItem }) {
-  const icon =
-    task.status === "completed" ? (
-      <CheckCircle2 className="size-3.5 text-emerald-500" />
-    ) : task.status === "in_progress" ? (
-      <CircleDot className="size-3.5 text-amber-500" />
-    ) : task.status === "blocked" ? (
-      <XCircle className="size-3.5 text-destructive" />
-    ) : (
-      <Circle className="size-3.5 text-muted-foreground/60" />
-    );
+export function InspectorStatus({ status }: { status: string }) {
+  if (status === "running" || status === "in_progress") return <LoaderCircle aria-label="Running" className="size-3.5 shrink-0 animate-spin text-amber-600 dark:text-amber-400 motion-reduce:animate-none" />;
+  if (status === "error" || status === "blocked") return <CircleAlert aria-label="Needs attention" className="size-3.5 shrink-0 text-destructive" />;
+  if (status === "waiting") return <CircleDot aria-label="Waiting" className="size-3.5 shrink-0 text-amber-600 dark:text-amber-400" />;
+  if (status === "completed" || status === "success") return <Check aria-label="Completed" className="size-3.5 shrink-0 text-emerald-700 dark:text-emerald-400" />;
+  return <Circle aria-label="Pending" className="size-3.5 shrink-0 text-muted-foreground" />;
+}
+
+export function FileChangeRow({ file, onClick }: { file: ChangedFile; onClick: () => void }) {
+  return <button type="button" onClick={onClick} title={file.path} className="inspector-row group flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring">
+    <span title={file.status} className={cn("w-3 shrink-0 font-mono text-[10px]", file.status === "conflicted" ? "text-destructive" : file.status === "added" || file.status === "untracked" ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400")}>{file.status === "untracked" ? "?" : file.status === "conflicted" ? "!" : file.status[0].toUpperCase()}</span>
+    <span className="min-w-0 flex-1 truncate">{file.path}</span>
+    <span className="shrink-0 font-mono text-[10px] tabular-nums">
+      {file.additions !== null && <span className="text-emerald-700 dark:text-emerald-400">+{file.additions}</span>}
+      {file.deletions !== null && <span className="ml-1.5 text-destructive">−{file.deletions}</span>}
+    </span>
+  </button>;
+}
+
+export function RightPanel({ data, onInspect, onClose }: { data: InspectorData; onInspect: (selection: InspectorSelection) => void; onClose: () => void }) {
+  const { session, tasks, activeTask, agents, files, state, activity } = data;
+  const completed = tasks.filter((task) => task.status === "completed").length;
+  const activeAgents = agents.filter((agent) => agent.status !== "success");
+  const finishedAgents = agents.length - activeAgents.length;
+  const hasExecution = Boolean(session || data.runs.length || data.error);
+  const usage = session?.contextUsage;
+  const label = state === "error" ? "Needs attention" : state === "waiting" ? "Waiting" : state === "running" ? "Running" : "Completed";
   return (
-    <div className="flex items-start gap-2 px-2 py-1">
-      <span className="mt-0.5 shrink-0">{icon}</span>
-      <span
-        className={cn(
-          "text-[11px] leading-snug",
-          task.status === "completed" ? "text-muted-foreground line-through" : "text-foreground/80",
-        )}
-      >
-        {task.content}
-      </span>
-    </div>
+    <aside aria-label="Inspector" className="inspector flex w-[272px] min-w-0 shrink-0 flex-col border-l bg-sidebar/40 max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:z-20 max-lg:w-[min(272px,100vw)] max-lg:bg-sidebar">
+      <header className="flex h-11 shrink-0 items-center justify-between border-b px-4">
+        <h2 className="text-xs font-medium">Inspector</h2>
+        {hasExecution && <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground"><InspectorStatus status={state} />{label}</span>}
+        <button type="button" aria-label="Close Inspector" onClick={onClose} className="rounded p-1 text-muted-foreground hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring"><X className="size-3.5" /></button>
+      </header>
+      <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-3">
+        {hasExecution && <section aria-label="Execution" className="border-b py-4">
+          <h3 className="mb-2 px-1 text-[11px] font-medium text-muted-foreground">Execution</h3>
+          {session?.goal?.goal.objective && <button type="button" onClick={() => onInspect({ kind: "tasks" })} className="mb-2 w-full rounded px-1 text-left text-xs leading-5 hover:text-muted-foreground" title={session.goal.goal.objective}><span className="line-clamp-2">{session.goal.goal.objective}</span></button>}
+          {tasks.length > 0 && <button type="button" onClick={() => onInspect({ kind: "tasks" })} className="mb-3 block w-full rounded px-1 py-1 text-left hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring">
+            <span className="mb-1 flex items-center justify-between text-[10px] text-muted-foreground"><span>{activeTask?.status === "blocked" ? "Blocked" : activeTask?.status === "pending" ? "Up next" : activeTask ? "In progress" : "Tasks completed"}</span><span className="tabular-nums">{completed}/{tasks.length}</span></span>
+            {activeTask && <span className="mb-2 line-clamp-2 text-xs leading-5">{activeTask.content}</span>}
+            <span role="progressbar" aria-label="Task progress" aria-valuenow={completed} aria-valuemin={0} aria-valuemax={tasks.length} className="block h-0.5 overflow-hidden rounded-full bg-border"><span className="block h-full bg-foreground/40" style={{ width: `${completed / tasks.length * 100}%` }} /></span>
+          </button>}
+          <div className={cn("flex flex-col gap-0.5", state === "completed" && "inspector-settled")}>
+            {activeAgents.filter((agent) => agent.status === "error" || agent.status === "waiting").map((agent) => <AgentRow key={agent.id} name={agent.name} status={agent.status} snapshot={agent.snapshot} activity={agent.activity} onClick={() => onInspect({ kind: "agent", id: agent.id })} />)}
+            <AgentRow name="Main" status={data.mainState} activity={activity} onClick={() => onInspect({ kind: "agent", id: "main" })} />
+            {activeAgents.filter((agent) => agent.status !== "error" && agent.status !== "waiting").map((agent) => <AgentRow key={agent.id} name={agent.name} status={agent.status} snapshot={agent.snapshot} activity={agent.activity} onClick={() => onInspect({ kind: "agent", id: agent.id })} />)}
+          </div>
+          {finishedAgents > 0 && <button type="button" onClick={() => onInspect({ kind: "agent", id: "all" })} className="mt-1 flex w-full items-center gap-2 rounded px-2 py-1.5 text-[11px] text-muted-foreground hover:bg-sidebar-accent"><Check className="size-3" />{finishedAgents} {finishedAgents === 1 ? "agent" : "agents"} completed<ChevronRight className="ml-auto size-3" /></button>}
+        </section>}
+        {files && files.length > 0 && <section aria-label="Changes" className="py-4">
+          <div className="mb-2 flex items-center justify-between px-1"><h3 className="text-[11px] font-medium text-muted-foreground">Changes</h3><span className="text-[10px] tabular-nums text-muted-foreground">{files.length} files</span></div>
+          <div className="inspector-files">{[...files].sort((a, b) => Number(b.status === "conflicted") - Number(a.status === "conflicted") || Number(data.sessionFiles?.includes(b)) - Number(data.sessionFiles?.includes(a))).slice(0, 5).map((file) => <FileChangeRow key={file.path} file={file} onClick={() => onInspect({ kind: "diff", path: file.path })} />)}</div>
+          <button type="button" onClick={() => onInspect({ kind: "changes" })} className="mt-2 flex w-full items-center justify-between rounded px-2 py-1.5 text-[11px] text-muted-foreground hover:bg-sidebar-accent hover:text-foreground">View all changes<ChevronRight className="size-3" /></button>
+        </section>}
+        {data.gitError && <button type="button" onClick={() => onInspect({ kind: "changes" })} className="my-3 flex items-center gap-2 px-1 text-left text-[11px] text-destructive"><CircleAlert className="size-3.5" />Cannot read Git changes<ChevronRight className="size-3" /></button>}
+      </div>
+      {(usage || data.stats) && <button type="button" onClick={() => onInspect({ kind: "context" })} className="shrink-0 border-t px-4 py-3 text-left hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+        <span className="flex items-center justify-between text-[11px]"><span className="text-muted-foreground">Context</span><span className="tabular-nums">{usage ? `${Math.max(0, 100 - usage.percent).toFixed(0)}% left` : `${formatTokens(data.stats?.tokens.total)} tokens`}<ChevronRight className="ml-1 inline size-3 text-muted-foreground" /></span></span>
+        {usage && <span role="progressbar" aria-label="Context used" aria-valuenow={Math.round(usage.percent)} aria-valuemin={0} aria-valuemax={100} className="mt-2 block h-1 overflow-hidden rounded-full bg-border"><span className={cn("block h-full rounded-full", usage.percent >= 90 ? "bg-destructive" : usage.percent >= 75 ? "bg-amber-600 dark:bg-amber-400" : "bg-muted-foreground/50")} style={{ width: `${Math.max(0, Math.min(100, usage.percent))}%` }} /></span>}
+      </button>}
+    </aside>
   );
 }
 
-export function RightPanel() {
-  const session = useAppStore((state) => state.session);
-  const notices = useAppStore((state) => state.notices);
-  const toolRuns = useAppStore((state) => state.toolRuns);
-  const widgets = useAppStore((state) => state.widgets);
-  const stats = useAppStore((state) => state.stats);
-  const statusMarks = useAppStore((state) => state.statusMarks);
-  const todos = activeTodos(session?.todoPhases);
-  const usage = session?.contextUsage;
-  const goal = session?.goal?.goal;
-  const running = Object.values(toolRuns).filter((run) => run.status === "running");
-
-  return (
-    <aside className="hidden w-[292px] shrink-0 flex-col border-l bg-sidebar/60 xl:flex">
-      <div className="flex h-9 shrink-0 items-center gap-2 px-4">
-        <h2 className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Activity</h2>
-        <span className="ml-auto text-[10px] tabular-nums text-muted-foreground">{session?.messageCount ?? 0} entries</span>
-      </div>
-
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="space-y-4 p-3">
-          {goal && (
-            <section className="rounded-lg border border-border/70 bg-card/60 p-2.5">
-              <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                <Target className="size-3" /> Goal
-              </div>
-              <p className="text-[11px] leading-relaxed text-foreground/80">{goal.objective}</p>
-              <div className="mt-2 space-y-1 text-[10px] text-muted-foreground">
-                <p className="capitalize">{goal.status}</p>
-                <p>{formatTokens(goal.tokensUsed)}{goal.tokenBudget !== undefined ? ` / ${formatTokens(goal.tokenBudget)}` : ""} tokens · {Math.floor(goal.timeUsedSeconds)}s</p>
-              </div>
-            </section>
-          )}
-
-          <section>
-            <div className="mb-1 flex items-center justify-between px-1">
-              <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Todos</span>
-              {todos.total > 0 && (
-                <span className="text-[10px] text-muted-foreground/70">
-                  {todos.completed}/{todos.total}
-                </span>
-              )}
-            </div>
-            {(session?.todoPhases ?? []).length === 0 ? (
-              <p className="px-2 py-3 text-[11px] text-muted-foreground/70">The agent has not opened a todo list.</p>
-            ) : (
-              (session?.todoPhases ?? []).map((phase) => (
-                <div key={phase.name} className="mb-2">
-                  <div className="px-2 pb-0.5 text-[9px] uppercase tracking-wider text-muted-foreground/60">
-                    {phase.name}
-                  </div>
-                  {phase.tasks.map((task, index) => (
-                    <TodoRow key={`${task.content}-${index}`} task={task} />
-                  ))}
-                </div>
-              ))
-            )}
-          </section>
-
-          {running.length > 0 && (
-            <section>
-              <div className="mb-1 px-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                Running tools
-              </div>
-              {running.map((run) => (
-                <div key={run.toolCallId} className="flex items-center gap-2 px-2 py-1 text-[11px]">
-                  <LoaderCircle className="size-3.5 animate-spin text-amber-500" />
-                  <span className="font-mono">{run.toolName}</span>
-                  <span className="truncate text-muted-foreground">
-                    {typeof run.args?.command === "string" ? run.args.command : ""}
-                  </span>
-                </div>
-              ))}
-            </section>
-          )}
-
-          <section>
-            <div className="mb-1 px-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Context</div>
-            <div className="space-y-1.5 rounded-lg border border-border/70 bg-card/50 p-2.5 text-[11px]">
-              {usage ? (
-                <>
-                  <div className="flex justify-between text-muted-foreground">
-                    <span>{formatTokens(usage.tokens)} tokens</span>
-                    <span>{usage.percent.toFixed(1)}%</span>
-                  </div>
-                  <div className="h-1.5 overflow-hidden rounded-full bg-border/80">
-                    <div
-                      className="h-full rounded-full bg-emerald-500/70"
-                      style={{ width: `${Math.min(100, usage.percent)}%` }}
-                    />
-                  </div>
-                  <div className="text-[10px] text-muted-foreground/60">
-                    {formatTokens(usage.contextWindow)} token window
-                  </div>
-                </>
-              ) : (
-                <span className="text-muted-foreground">Context usage unavailable.</span>
-              )}
-              {stats && (
-                <div className="flex justify-between border-t border-border/60 pt-1.5 text-[10px] text-muted-foreground">
-                  <span>spend</span>
-                  <span>{formatCost(stats.cost)}</span>
-                </div>
-              )}
-              {stats && (
-                <div className="flex justify-between text-[10px] text-muted-foreground">
-                  <span>in / out</span>
-                  <span>
-                    {formatTokens(stats.tokens.input)} / {formatTokens(stats.tokens.output)}
-                  </span>
-                </div>
-              )}
-            </div>
-          </section>
-
-          {Object.keys(statusMarks).length > 0 && (
-            <section>
-              <div className="mb-1 px-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Status</div>
-              {Object.entries(statusMarks).map(([key, value]) => (
-                <div key={key} className="flex items-center justify-between px-2 py-0.5 text-[11px]">
-                  <span className="text-muted-foreground">{key}</span>
-                  <span className="truncate text-foreground/80">{value}</span>
-                </div>
-              ))}
-            </section>
-          )}
-
-          {Object.keys(widgets).length > 0 && (
-            <section>
-              <div className="mb-1 px-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                Widgets
-              </div>
-              {Object.entries(widgets).map(([key, lines]) => (
-                <div key={key} className="mb-1.5 rounded-lg border border-border/60 bg-card/40 px-2 py-1.5">
-                  <div className="mb-0.5 text-[9px] uppercase tracking-wider text-muted-foreground/60">{key}</div>
-                  <pre className="font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-foreground/75">
-                    {lines.join("\n")}
-                  </pre>
-                </div>
-              ))}
-            </section>
-          )}
-
-          <section>
-            <div className="mb-1 px-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Log</div>
-            {notices.length === 0 ? (
-              <p className="px-2 py-2 text-[11px] text-muted-foreground/70">Notices from the agent appear here.</p>
-            ) : (
-              <div className="space-y-1">
-                {notices
-                  .filter((notice) => !notice.message.startsWith("xd://: mounted"))
-                  .slice(-20)
-                  .reverse()
-                  .map((notice) => (
-                    <div key={notice.id} className="flex gap-2 px-2 text-[10.5px] leading-relaxed">
-                      <span
-                        className={cn(
-                          "mt-1 size-1.5 shrink-0 rounded-full",
-                          notice.kind === "error"
-                            ? "bg-destructive"
-                            : notice.kind === "warning"
-                              ? "bg-amber-500"
-                              : notice.kind === "progress"
-                                ? "bg-sky-500"
-                                : "bg-muted-foreground/40",
-                        )}
-                      />
-                      <span className="min-w-0 flex-1 break-words text-muted-foreground">{notice.message}</span>
-                      <span className="shrink-0 text-[9px] text-muted-foreground/50">
-                        {formatRelativeTime(notice.at)}
-                      </span>
-                    </div>
-                  ))}
-              </div>
-            )}
-          </section>
-        </div>
-      </ScrollArea>
-
-      <div className="border-t p-2.5">
-        <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-          <span className="truncate">{session?.sessionFile ?? "No session file"}</span>
-          {session?.autoCompactionEnabled && <span className="ml-2 shrink-0">auto-compact</span>}
-        </div>
-      </div>
-    </aside>
-  );
+function AgentRow({ name, status, activity, snapshot, onClick }: { name: string; status: string; activity?: string; snapshot?: boolean; onClick: () => void }) {
+  return <button type="button" onClick={onClick} className="inspector-agent flex w-full items-start gap-2 rounded px-2 py-2 text-left hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring">
+    <span className="mt-0.5"><InspectorStatus status={snapshot ? "snapshot" : status} /></span><span className="min-w-0 flex-1"><span className="flex items-center justify-between gap-2 text-xs"><span className="truncate font-medium">{name}</span><span className="text-[10px] font-normal text-muted-foreground">{snapshot ? "Snapshot" : status === "error" ? "Failed" : status === "success" || status === "completed" ? "Completed" : status === "waiting" ? "Waiting" : "Running"}</span></span>{activity && <span className="inspector-activity mt-0.5 block truncate text-[11px] text-muted-foreground" title={activity}>{activity}</span>}</span>
+  </button>;
 }

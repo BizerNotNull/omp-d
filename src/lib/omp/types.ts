@@ -354,6 +354,46 @@ export interface ToolExecutionFrame {
   isError?: boolean;
 }
 
+export interface SubagentProgress {
+  id: string;
+  index: number;
+  agent: string;
+  status: "pending" | "running" | "completed" | "failed" | "aborted";
+  task: string;
+  description?: string;
+  assignment?: string;
+  lastIntent?: string;
+  currentTool?: string;
+  currentToolArgs?: string;
+  recentOutput?: string[];
+  retryState?: { errorMessage: string };
+  retryFailure?: { errorMessage: string };
+  [key: string]: unknown;
+}
+
+export interface SubagentSnapshot {
+  id: string;
+  index: number;
+  agent: string;
+  agentSource?: string;
+  status: SubagentProgress["status"];
+  description?: string;
+  task?: string;
+  assignment?: string;
+  sessionFile?: string;
+  parentToolCallId?: string;
+  lastUpdate: number;
+  progress?: SubagentProgress;
+}
+
+export interface SubagentMessagesResult {
+  sessionFile: string;
+  fromByte: number;
+  nextByte: number;
+  reset: boolean;
+  messages: AgentMessage[];
+}
+
 export interface QueueUpdateFrame {
   type: "queue_update";
   steering: string[];

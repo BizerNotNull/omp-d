@@ -325,3 +325,16 @@ body,
   0%, 49% { opacity: 0.55; }
   50%, 100% { opacity: 0; }
 }
+
+/* Inspector keeps details in the workspace; short windows show summaries. */
+.inspector-settled .inspector-activity {
+  display: none;
+}
+@media (max-height: 720px) {
+  .inspector .inspector-activity {
+    display: none;
+  }
+  .inspector-files .inspector-row:nth-child(n + 3) {
+    display: none;
+  }
+}

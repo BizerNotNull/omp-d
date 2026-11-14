@@ -15,9 +15,10 @@ The app spawns a local `omp --mode rpc-ui` process and speaks its newline-delimi
 - Shared `/model` and `/models` page with providers on the left, configured roles and models on the right, model-kind filters, search, keyboard navigation, and live-session switching. Project/profile-scoped cached catalogs render immediately; CLI discovery refreshes in the background. Role queries use project/profile settings; `--config` role overlays are unsupported by the CLI and produce a visible warning.
 - Unauthenticated/unavailable providers remain visible below available providers. Their full registry catalogs can be browsed, but model selection stays disabled until credentials/configuration are ready and the catalog is refreshed.
 - Composer with Enter/Shift+Enter, steering and follow-up queues, queued-message chips, Esc abort, image paste, and slash-command autocomplete.
-- Goal commands: `/goal <objective>` or `/goal set <objective>` starts a goal; `/goal` and `/goal show` display it; `/goal pause`, `/goal resume`, and `/goal drop` manage its lifecycle. The Activity rail shows its status and usage. Budget editing and `/guided-goal` require runtime RPC operations that are not currently available.
+- Goal commands: `/goal <objective>` or `/goal set <objective>` starts a goal; `/goal` and `/goal show` display it; `/goal pause`, `/goal resume`, and `/goal drop` manage its lifecycle. Inspector shows the objective and task progress. Budget editing and `/guided-goal` require runtime RPC operations that are not currently available.
 - Extension UI dialogs for `select`, `confirm`, `input`, `editor` and `ask`, plus `notify`, status marks and widgets.
-- Activity rail with TODOs, running tools, context usage, spend and agent notices.
+- Compact Inspector with goal/task progress, Main activity, live subagent status and tool activity, Git file summaries, and a context footer. Tasks, agents, file diffs and resource details open in the main workspace; completed agents collapse into a count. Short windows reduce row detail.
+- Changes can be filtered to files with recorded successful session edits or the full working tree. Both scopes show the current net Git diff against HEAD, including staged/unstaged edits; session scope is file attribution, not a session-only patch. Shell-based edits without structured file metadata cannot be attributed. Git queries are read-only and bounded; binary files and oversized diffs are reported explicitly.
 - Embedded PTY terminal with shell tabs, scrollback, drag/keyboard resizing, maximize/restore, and `Ctrl+backtick` (`Cmd+backtick` on macOS). Hidden terminals keep running.
 - Native `/settings` editor: searchable catalog from the configured omp installation, native categories and enum choices, typed scalar/JSON editors, masked credentials, and per-setting global Save/Reset. Effective project/environment values are shown separately from global drafts. Desktop launch preferences remain in a separate tab.
 - Process supervision: v1/v2 RPC framing, chunk reassembly, crash detection, clean shutdown, and restart that preserves the current session.
@@ -105,7 +106,7 @@ Protocol v1 is the baseline. The client negotiates v2 after `ready`, letting fra
 
 ## Limitations
 
-- No subagent timeline (`set_subagent_subscription` is not used), no `/btw` side questions, voice or dictation.
+- Live subagent status and child transcripts require `set_subagent_subscription`, `get_subagents` and `get_subagent_messages`. Older runtimes retain clearly marked task snapshots. No `/btw` side questions, voice or dictation.
 - No host-tool or host-URI registration.
 - RPC mode has no approval request, so the UI does not show approve/deny prompts; it inherits the launch policy of the `omp` child.
 - One agent process per window. Session switching aborts an in-flight turn, as the RPC command does.

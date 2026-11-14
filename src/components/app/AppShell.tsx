@@ -14,6 +14,8 @@ import { ProviderLogin } from "./ProviderLogin";
 import { SettingsDialog } from "./SettingsDialog";
 import { splitExtraArgs } from "@/lib/omp/model-catalog";
 import { useAppStore } from "@/lib/omp/store";
+import { InspectorDetail } from "./InspectorDetail";
+import { useInspectorData, type InspectorSelection } from "@/lib/omp/inspector-data";
 
 const TerminalPanel = lazy(() => import("./TerminalPanel").then((module) => ({ default: module.TerminalPanel })));
 
@@ -30,6 +32,13 @@ export function AppShell() {
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalWorkspace, setTerminalWorkspace] = useState<string>();
   const terminalVisible = terminalOpen && terminalWorkspace === cwd;
+  const inspector = useInspectorData();
+  const [inspection, setInspection] = useState<{ runtime: number; session?: string; selection: InspectorSelection }>();
+  const selection = inspection?.runtime === activeRuntimeId && inspection.session === inspector.session?.sessionId ? inspection.selection : undefined;
+  function inspect(value: InspectorSelection) {
+    setInspection({ runtime: activeRuntimeId, session: inspector.session?.sessionId, selection: value });
+    if (window.innerWidth < 1024) setPanelOpen(false);
+  }
 
   function toggleTerminal() {
     if (!cwd) return;
@@ -78,7 +87,7 @@ export function AppShell() {
   return (
     <TooltipProvider>
       <div className="flex h-full w-full flex-col bg-background text-foreground">
-        <div className="flex min-h-0 flex-1">
+        <div className="relative flex min-h-0 flex-1">
           {!modelsOpen && <Sidebar />}
           <main className="relative flex min-w-0 flex-1 flex-col">
             {!modelsOpen && <TopBar
@@ -89,9 +98,10 @@ export function AppShell() {
             />}
             {modelsOpen && <div className={loginProvider ? "hidden" : "flex min-h-0 flex-1 flex-col"}><ModelPicker active={!loginProvider} onClose={() => setModelsOpen(false)} onLoginRequest={setLoginProvider} /></div>}
             {modelsOpen && loginProvider && <ProviderLogin key={`${cwd}:${loginProvider}`} provider={loginProvider} options={{ cwd, binary: preferences.binary.trim() || "omp", extraArgs: splitExtraArgs(preferences.extraArgs) }} onBack={() => setLoginProvider(undefined)} onSuccess={() => { setLoginProvider(undefined); void useAppStore.getState().fetchModels(); }} />}
-            <div className={modelsOpen ? "hidden" : "flex min-h-0 flex-1 flex-col overflow-hidden"}>
+            {!modelsOpen && selection && <InspectorDetail selection={selection} data={inspector} onSelect={inspect} onClose={() => setInspection(undefined)} />}
+            <div className={modelsOpen || selection ? "hidden" : "flex min-h-0 flex-1 flex-col overflow-hidden"}>
               <ChatView key={`chat-${activeRuntimeId}`} />
-              <Composer key={`composer-${activeRuntimeId}`} active={!modelsOpen && !settingsOpen} onOpenModels={() => setModelsOpen(true)} onOpenSettings={() => setSettingsOpen(true)} />
+              <Composer key={`composer-${activeRuntimeId}`} active={!modelsOpen && !settingsOpen && !selection} onOpenModels={() => setModelsOpen(true)} onOpenSettings={() => setSettingsOpen(true)} />
             </div>
             {terminalWorkspace === cwd && (
               <Suspense fallback={terminalVisible ? <div role="status" className="border-t p-3 text-xs text-muted-foreground">Loading terminal…</div> : null}>
@@ -99,7 +109,7 @@ export function AppShell() {
               </Suspense>
             )}
           </main>
-          {panelOpen && !modelsOpen && <RightPanel />}
+          {panelOpen && !modelsOpen && <RightPanel data={inspector} onInspect={inspect} onClose={() => setPanelOpen(false)} />}
         </div>
         <StatusBar terminalOpen={terminalVisible} onToggleTerminal={toggleTerminal} />
         <ExtensionDialogs />

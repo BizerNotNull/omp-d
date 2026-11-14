@@ -2,6 +2,8 @@ import { useEffect } from "react";
 import { Gauge, GitBranch, Target } from "lucide-react";
 import { useAppStore } from "@/lib/omp/store";
 import { formatTokens, stripAnsi, stripPrivateUse } from "@/lib/omp/format";
+import { sessionPathKey, useSessionNavigation } from "@/lib/omp/navigation";
+import { WorktreeSelector, worktreeName } from "./WorktreeSelector";
 
 export function ComposerStatus({ active }: { active: boolean }) {
   const cwd = useAppStore((state) => state.cwd);
@@ -12,6 +14,11 @@ export function ComposerStatus({ active }: { active: boolean }) {
   const gitError = useAppStore((state) => state.gitStatusError);
   const statusMarks = useAppStore((state) => state.statusMarks);
   const refreshGitStatus = useAppStore((state) => state.refreshGitStatus);
+  const messages = useAppStore((state) => state.messages);
+  const newSession = useAppStore((state) => state.newSession);
+  const directories = useSessionNavigation((state) => state.sessionListing?.directories);
+  const directory = directories?.find((item) => sessionPathKey(item.cwd) === sessionPathKey(cwd));
+  const canChooseWorktree = !busy && !session?.hasPendingAsyncWork && messages.length === 0 && status === "ready";
 
   useEffect(() => {
     if (!active || status !== "ready") return;
@@ -34,6 +41,9 @@ export function ComposerStatus({ active }: { active: boolean }) {
 
   return (
     <div aria-label="Session and Git status" className="mt-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[10px] text-muted-foreground">
+      {cwd && (canChooseWorktree
+        ? <WorktreeSelector value={cwd} allowAll={false} className="w-auto max-w-full py-1 text-[10px]" onSelect={(target) => { if (sessionPathKey(target) !== sessionPathKey(cwd)) void newSession(target); }} />
+        : <span className="inline-flex min-w-0 max-w-full items-center gap-1" title={cwd}><GitBranch aria-hidden="true" className="size-3 shrink-0" /><span className="truncate">{worktreeName(cwd, directory?.branch)}</span></span>)}
       {goal && (
         <span className="inline-flex min-w-0 max-w-full items-center gap-1.5">
           <Target aria-hidden="true" className="size-3 shrink-0" />

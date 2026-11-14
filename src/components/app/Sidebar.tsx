@@ -1,221 +1,164 @@
-import { useMemo } from "react";
-import {
-  FolderOpen,
-  GitBranch,
-  LoaderCircle,
-  MessageSquarePlus,
-  SquarePen,
-} from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, FolderOpen, GitBranch, LoaderCircle, MessageSquarePlus, Pin, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/omp/store";
+import { sessionPathKey, useSessionNavigation } from "@/lib/omp/navigation";
 import { formatRelativeTime, stripPrivateUse } from "@/lib/omp/format";
+import { WorktreeSelector, worktreeName } from "./WorktreeSelector";
+
+const ROW_HEIGHT = 72;
 
 export function Sidebar() {
   const cwd = useAppStore((state) => state.cwd);
   const status = useAppStore((state) => state.status);
-  const sessionListing = useAppStore((state) => state.sessionListing);
-  const sessionsLoading = useAppStore((state) => state.sessionsLoading);
   const session = useAppStore((state) => state.session);
+  const activeRuntimeId = useAppStore((state) => state.activeRuntimeId);
   const openProjectDialog = useAppStore((state) => state.openProjectDialog);
   const newSession = useAppStore((state) => state.newSession);
   const switchSession = useAppStore((state) => state.switchSession);
-  const busy = useAppStore((state) => state.busy);
-  const openSessions = useAppStore((state) => state.openSessions);
-  const activeRuntimeId = useAppStore((state) => state.activeRuntimeId);
   const selectRuntime = useAppStore((state) => state.selectRuntime);
+  const openSessions = useAppStore((state) => state.openSessions);
+  const view = useSessionNavigation((state) => state.view);
+  const scope = useSessionNavigation((state) => state.worktreeScope);
+  const query = useSessionNavigation((state) => state.query);
+  const listing = useSessionNavigation((state) => state.sessionListing);
+  const loading = useSessionNavigation((state) => state.sessionsLoading);
+  const error = useSessionNavigation((state) => state.error);
+  const pins = useSessionNavigation((state) => state.pinnedSessions);
+  const setView = useSessionNavigation((state) => state.setView);
+  const setQuery = useSessionNavigation((state) => state.setQuery);
+  const selectWorktree = useSessionNavigation((state) => state.selectWorktree);
+  const togglePin = useSessionNavigation((state) => state.toggleSessionPin);
+  const loadMore = useSessionNavigation((state) => state.loadMore);
+  const refresh = useSessionNavigation((state) => state.refresh);
+  const rememberScroll = useSessionNavigation((state) => state.rememberScroll);
+  const repositoryCwd = useSessionNavigation((state) => state.repositoryCwd);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const restoration = useRef({ key: "", top: 0, pending: true });
+  const [viewport, setViewport] = useState({ top: 0, height: 600 });
+  const project = repositoryCwd ?? cwd ?? "";
+  const scrollKey = JSON.stringify([sessionPathKey(project), view, scope, query]);
+  const pinnedKeys = useMemo(() => new Set(pins.map(sessionPathKey)), [pins]);
+  const rows = useMemo(() => {
+    const directories = listing?.directories ?? [];
+    const directoryKeys = new Set(directories.map((item) => sessionPathKey(item.cwd)));
+    const saved = new Map((listing?.sessions ?? []).map((item) => [sessionPathKey(item.path), item]));
+    const result = [...saved.values()].map((item) => ({
+      key: sessionPathKey(item.path), path: item.path, cwd: item.cwd,
+      title: stripPrivateUse(item.title || item.preview || "Untitled session"),
+      modifiedMs: item.modifiedMs,
+      runtime: openSessions.find((entry) => sessionPathKey(entry.path) === sessionPathKey(item.path)),
+    }));
+    for (const runtime of openSessions) {
+      if (!runtime.cwd || (!directoryKeys.has(sessionPathKey(runtime.cwd)) && sessionPathKey(runtime.cwd) !== sessionPathKey(cwd))) continue;
+      const existing = result.find((item) => item.runtime?.id === runtime.id);
+      if (existing) {
+        existing.title = runtime.title === "Untitled session" ? existing.title : runtime.title;
+        existing.modifiedMs = Math.max(existing.modifiedMs, runtime.modifiedMs);
+      } else {
+        result.push({ key: runtime.path ? sessionPathKey(runtime.path) : `runtime:${runtime.id}`, path: runtime.path ?? "", cwd: runtime.cwd, title: runtime.title, modifiedMs: runtime.modifiedMs, runtime });
+      }
+    }
+    return result.filter((item) => {
+      if (!query && scope !== "all" && sessionPathKey(item.cwd) !== sessionPathKey(scope)) return false;
+      if (view === "running" && !item.runtime?.busy) return false;
+      if (view === "pinned" && !pinnedKeys.has(sessionPathKey(item.path))) return false;
+      if (query && !saved.has(sessionPathKey(item.path))) {
+        const directory = directories.find((entry) => sessionPathKey(entry.cwd) === sessionPathKey(item.cwd));
+        if (!`${item.title} ${item.cwd} ${directory?.branch ?? ""}`.toLowerCase().includes(query.toLowerCase())) return false;
+      }
+      return true;
+    }).sort((a, b) => b.modifiedMs - a.modifiedMs || a.key.localeCompare(b.key));
+  }, [listing, openSessions, cwd, scope, view, query, pinnedKeys]);
 
-  const projectName = useMemo(() => {
-    if (!cwd) return "No project";
-    const parts = cwd.replace(/\\/g, "/").split("/").filter(Boolean);
-    return parts[parts.length - 1] ?? cwd;
-  }, [cwd]);
+  useLayoutEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    if (restoration.current.key !== scrollKey) {
+      restoration.current = { key: scrollKey, top: useSessionNavigation.getState().scrollPositionByScope[scrollKey] ?? 0, pending: true };
+    }
+    const restore = restoration.current;
+    if (!restore.pending) return;
+    element.scrollTop = restore.top;
+    setViewport({ top: element.scrollTop, height: element.clientHeight });
+    const reached = restore.top <= element.scrollHeight - element.clientHeight;
+    if (listing && !loading && (reached || !listing.nextCursor)) restore.pending = false;
+  }, [scrollKey, rows.length, loading, listing?.nextCursor]);
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver(() => setViewport({ top: element.scrollTop, height: element.clientHeight }));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {
+    if (!loading && !error && listing?.nextCursor && viewport.top + viewport.height >= rows.length * ROW_HEIGHT - ROW_HEIGHT * 5) void loadMore();
+  }, [loading, error, listing?.nextCursor, viewport, rows.length, loadMore]);
 
-  const activePath = session?.sessionFile;
-  const sessionCount = sessionListing?.directories.reduce((count, directory) => count + directory.sessions.length, 0) ?? 0;
+  const start = Math.max(0, Math.floor(viewport.top / ROW_HEIGHT) - 4);
+  const end = Math.min(rows.length, Math.ceil((viewport.top + viewport.height) / ROW_HEIGHT) + 4);
+  const heading = query ? "Search results" : `${view[0].toUpperCase()}${view.slice(1)} sessions`;
 
   return (
-    <aside className="flex w-[264px] min-w-0 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
-      <div className="flex h-9 shrink-0 items-center px-4 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-        Workspace
-      </div>
-
-      <div className="px-3">
-        <button
-          type="button"
-          onClick={() => void openProjectDialog()}
-          className="group flex w-full items-center gap-2 rounded-lg border border-sidebar-border bg-sidebar-accent/40 px-2.5 py-2 text-left transition-colors hover:bg-sidebar-accent"
-        >
-          <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-[12px] font-medium">{projectName}</div>
-            <div className="truncate text-[10px] text-muted-foreground">{cwd ?? "Choose a folder"}</div>
-          </div>
+    <aside aria-label="Session navigation" className="flex w-[264px] min-w-0 max-w-[70vw] shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
+      <div className="shrink-0 space-y-3 px-3 pt-4 pb-2">
+        <button type="button" onClick={() => void openProjectDialog()} title={project || "Choose a project"} aria-label="Switch project" className="flex w-full min-w-0 items-center gap-2 rounded-lg px-1 py-1 text-left hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring">
+          <FolderOpen aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{project ? worktreeName(project) : "No project"}</span>
+          <ChevronDown aria-hidden="true" className="size-3 text-muted-foreground" />
         </button>
-      </div>
-
-      <div className="mt-4 flex items-center justify-between px-4 pb-1.5">
-        <h2 className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">Recent</h2>
-        <div className="flex items-center gap-2">
-          {sessionsLoading && <LoaderCircle aria-label="Loading sessions" className="size-3.5 animate-spin text-muted-foreground" />}
-          <span className="text-[10px] text-muted-foreground/50">{sessionCount}</span>
+        <Button variant="outline" className="h-8 w-full justify-start gap-2 text-xs" disabled={!cwd || status === "starting"} onClick={() => void newSession()}><MessageSquarePlus className="size-3.5" />New Session</Button>
+        <div className="relative">
+          <Search aria-hidden="true" className="pointer-events-none absolute top-2.5 left-2 size-3.5 text-muted-foreground" />
+          <Input aria-label="Search all sessions" placeholder="Search all sessions…" value={query} onChange={(event) => setQuery(event.target.value)} className="h-8 pr-7 pl-7 text-[11px]" />
+          {query && <button type="button" aria-label="Clear session search" className="absolute top-2 right-2 text-muted-foreground" onClick={() => setQuery("")}><X className="size-4" /></button>}
         </div>
+        <div>
+          <h2 className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Sessions</h2>
+          <div aria-label="Session views" className="flex rounded-lg border border-sidebar-border p-0.5">
+            {(["recent", "running", "pinned"] as const).map((candidate) => <button type="button" key={candidate} aria-pressed={candidate === view} onClick={() => setView(candidate)} className={cn("min-w-0 flex-1 rounded-md px-1 py-1.5 text-[11px] capitalize focus-visible:ring-2 focus-visible:ring-ring", candidate === view ? "bg-sidebar-accent font-medium" : "text-muted-foreground hover:text-foreground")}>{candidate}</button>)}
+          </div>
+        </div>
+        <div>
+          <h2 className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Worktree</h2>
+          <WorktreeSelector value={scope} onSelect={(value) => void selectWorktree(value)} />
+          {query && scope !== "all" && <p className="mt-1 text-[10px] text-muted-foreground">Searching all Worktrees</p>}
+        </div>
+        <div className="flex items-center justify-between pt-1 text-[10px] text-muted-foreground"><h2>{heading}</h2>{loading && <LoaderCircle aria-label="Loading sessions" className="size-3 animate-spin motion-reduce:animate-none" />}</div>
       </div>
-
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="min-w-0 px-2 pb-3">
-          {openSessions.length > 1 && (
-            <section aria-label="Open sessions" className="mb-3">
-              <h3 className="px-2 py-1.5 text-[10px] font-medium text-muted-foreground">Open sessions</h3>
-              {openSessions.map((entry) => (
-                <button
-                  key={entry.id}
-                  type="button"
-                  onClick={() => selectRuntime(entry.id)}
-                  title={entry.cwd}
-                  className={cn("flex w-full min-w-0 items-center gap-1.5 rounded-lg px-2.5 py-2 text-left text-[12px]", entry.id === activeRuntimeId ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60")}
-                >
-                  {(entry.busy || entry.status === "starting") && <LoaderCircle aria-label="Session in progress" className="size-3.5 shrink-0 animate-spin text-emerald-500 motion-reduce:animate-none" />}
-                  <span className="min-w-0 flex-1 truncate">{stripPrivateUse(entry.title)}</span>
-                  {entry.dialogs > 0 && <span className="shrink-0 text-[10px] text-amber-500">Needs input</span>}
-                  {(entry.status === "error" || entry.status === "stopped") && <span className="shrink-0 text-[10px] text-muted-foreground">{entry.status}</span>}
+      <div ref={scrollRef} aria-label={heading} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 [overflow-anchor:none]" onScroll={(event) => {
+        const element = event.currentTarget;
+        setViewport({ top: element.scrollTop, height: element.clientHeight });
+        if (!restoration.current.pending) rememberScroll(scrollKey, element.scrollTop);
+      }} onWheel={() => { restoration.current.pending = false; }}>
+        <div role="list" aria-label="Sessions" style={{ height: rows.length * ROW_HEIGHT, position: "relative" }}>
+          {rows.slice(start, end).map((item, offset) => {
+            const current = item.runtime ? item.runtime.id === activeRuntimeId : sessionPathKey(item.path) === sessionPathKey(session?.sessionFile);
+            const directory = listing?.directories.find((entry) => sessionPathKey(entry.cwd) === sessionPathKey(item.cwd));
+            const pinned = pinnedKeys.has(sessionPathKey(item.path));
+            return <div role="listitem" key={item.key} style={{ position: "absolute", top: (start + offset) * ROW_HEIGHT, height: ROW_HEIGHT, left: 0, right: 0 }} className="pb-1">
+              <div className={cn("group flex h-full min-w-0 items-center rounded-lg", current ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60")}>
+                <button type="button" aria-current={current ? "page" : undefined} className="flex h-full min-w-0 flex-1 flex-col justify-center gap-1 rounded-lg px-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" title={`${item.title}\n${item.cwd}`} onClick={() => item.runtime ? selectRuntime(item.runtime.id) : void switchSession(item.path, item.cwd)}>
+                  <span className="flex w-full min-w-0 items-center gap-1.5">
+                    {item.runtime?.busy ? <LoaderCircle aria-label="Agent running" className="size-3 shrink-0 animate-spin text-emerald-500 motion-reduce:animate-none" /> : <span aria-hidden="true" className={cn("size-1.5 shrink-0 rounded-full", current ? "bg-emerald-500" : "bg-muted-foreground/40")} />}
+                    <span className={cn("min-w-0 truncate text-[12px]", current && "font-medium")}>{item.title}</span>
+                  </span>
+                  <span className="flex w-full min-w-0 items-center gap-1 text-[10px] text-muted-foreground"><GitBranch aria-hidden="true" className="size-3 shrink-0" /><span className="min-w-0 truncate">{worktreeName(item.cwd, directory?.branch)}</span><span className="shrink-0">· {formatRelativeTime(item.modifiedMs)}</span></span>
+                  {Boolean(item.runtime?.dialogs) && <span className="text-[10px] text-amber-500">Needs input</span>}
                 </button>
-              ))}
-            </section>
-          )}
-          {sessionsLoading && !sessionListing && (
-            <div role="status" className="px-2 py-6 text-center text-[11px] text-muted-foreground">
-              Loading sessions…
-            </div>
-          )}
-          {!sessionListing && !sessionsLoading && (
-            <div className="px-2 py-6 text-center text-[11px] text-muted-foreground">
-              <MessageSquarePlus className="mx-auto mb-2 size-5 opacity-40" />
-              {status === "ready" ? "No saved sessions in this folder yet." : "Waiting for the agent…"}
-            </div>
-          )}
-          {sessionListing && (
-            <section aria-label={sessionListing.repositoryCwd} className="min-w-0">
-              <h3
-                title={sessionListing.repositoryCwd}
-                className="flex min-w-0 items-center gap-1.5 px-2 py-1.5 text-[11px] font-medium"
-              >
-                <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 flex-1 truncate">{directoryName(sessionListing.repositoryCwd)}</span>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  className="shrink-0 text-muted-foreground hover:text-foreground"
-                  disabled={status !== "ready"}
-                  onClick={() => void newSession()}
-                  aria-label="New session"
-                  title="New session"
-                >
-                  <SquarePen className="size-3.5" />
-                </Button>
-              </h3>
-              {sessionListing.directories.map((directory) => (
-                <section
-                  key={directory.cwd}
-                  aria-label={directory.cwd}
-                  className={cn("ml-3 min-w-0", directory.cwd !== sessionListing.repositoryCwd && "mt-1")}
-                >
-                  {directory.cwd !== sessionListing.repositoryCwd && (
-                    <h4
-                      title={directory.cwd}
-                      className="flex min-w-0 items-center gap-1.5 px-2 py-1.5 text-[11px] font-medium"
-                    >
-                      {directory.isWorktree
-                        ? <GitBranch aria-label="Worktree" className="size-3.5 shrink-0 text-muted-foreground" />
-                        : <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />}
-                      <span className="min-w-0 truncate">{directoryName(directory.cwd)}</span>
-                    </h4>
-                  )}
-                  <div className={cn("min-w-0 space-y-0.5", directory.cwd !== sessionListing.repositoryCwd && "ml-3")}>
-                    {directory.sessions.length === 0 && (
-                      <p className="px-2.5 py-2 text-[11px] text-muted-foreground">
-                        No saved sessions in this folder yet.
-                      </p>
-                    )}
-                    {directory.sessions.map((item) => {
-                      const cleanTitle = stripPrivateUse(item.title ?? "").trim();
-                      const cleanPreview = stripPrivateUse(item.preview ?? "").trim();
-                      const title = cleanTitle || cleanPreview || "Untitled session";
-                      const subtitle = cleanTitle && cleanPreview && cleanPreview !== cleanTitle ? cleanPreview : "";
-                      const current = Boolean(activePath && item.path === activePath);
-                      const runtime = openSessions.find((entry) => entry.path === item.path);
-                      return (
-                        <button
-                          key={item.path}
-                          type="button"
-                          onClick={() => void switchSession(item.path)}
-                          className={cn(
-                            "group flex w-full min-w-0 flex-col gap-0.5 rounded-lg px-2.5 py-2 text-left transition-colors",
-                            current ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60",
-                          )}
-                        >
-                          <div className="flex w-full min-w-0 items-center gap-1.5">
-                            {runtime?.busy
-                              ? <LoaderCircle aria-label="Session in progress" className="size-3.5 shrink-0 animate-spin text-emerald-500 motion-reduce:animate-none" />
-                              : current && <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" />}
-                            <span className={cn("min-w-0 flex-1 truncate text-[12px]", current ? "font-medium" : "text-sidebar-foreground/85")}>
-                              {title}
-                            </span>
-                            <span className="ml-auto shrink-0 text-[9px] text-muted-foreground/60">
-                              {formatRelativeTime(item.modifiedMs)}
-                            </span>
-                          </div>
-                          {subtitle && (
-                            <span className="w-full min-w-0 truncate text-[10px] text-muted-foreground/70 group-hover:text-muted-foreground">
-                              {subtitle}
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </section>
-              ))}
-            </section>
-          )}
+                {item.path && <button type="button" aria-label={`${pinned ? "Unpin" : "Pin"} session ${item.title}`} aria-pressed={pinned} onClick={() => togglePin(item.path)} className={cn("mr-1.5 shrink-0 rounded p-1.5 text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring", !pinned && "opacity-0 group-hover:opacity-100 focus-visible:opacity-100")}><Pin aria-hidden="true" className={cn("size-3", pinned && "fill-current")} /></button>}
+              </div>
+            </div>;
+          })}
         </div>
-      </ScrollArea>
-
-      <div className="border-t border-sidebar-border px-3 py-2.5">
-        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-          <span className={cn("status-dot", statusTone(status))} />
-          <span className="truncate">{statusText(status, busy)}</span>
-        </div>
+        {!rows.length && !loading && !error && <p className="px-2 py-8 text-center text-[11px] text-muted-foreground">{query ? "No matching sessions." : view === "running" ? "No Agent tasks running." : view === "pinned" ? "Pin a session to save it here." : "No sessions in this view."}</p>}
+        {error && <div role="alert" className="p-2 text-[11px] text-destructive">{error}<button type="button" className="mt-2 block underline" onClick={() => void refresh()}>Retry loading sessions</button></div>}
+        {loading && <p role="status" className="p-3 text-center text-[10px] text-muted-foreground">Loading sessions…</p>}
+        {!loading && !error && listing?.nextCursor && <button type="button" onClick={() => void loadMore()} className="w-full p-3 text-[10px] text-muted-foreground hover:text-foreground">Load older sessions</button>}
       </div>
+      <div className="shrink-0 border-t border-sidebar-border px-3 py-2.5 text-[10px] text-muted-foreground"><span className={cn("mr-2 inline-block size-1.5 rounded-full", status === "ready" ? "bg-emerald-500" : status === "error" ? "bg-destructive" : "bg-muted-foreground")} />{status === "ready" ? "connected" : status === "starting" ? "starting omp" : status === "error" ? "connection error" : "disconnected"}</div>
     </aside>
   );
-}
-
-function directoryName(path: string): string {
-  const parts = path.replace(/\\/g, "/").split("/").filter(Boolean);
-  return parts[parts.length - 1] ?? path;
-}
-
-function statusTone(status: string): string {
-  switch (status) {
-    case "ready":
-      return "bg-emerald-500";
-    case "starting":
-      return "bg-amber-500 animate-pulse";
-    case "error":
-      return "bg-destructive";
-    case "stopped":
-      return "bg-muted-foreground";
-    default:
-      return "bg-muted-foreground/40";
-  }
-}
-
-function statusText(status: string, busy: boolean): string {
-  if (status === "ready") return busy ? "working" : "connected";
-  if (status === "starting") return "starting omp";
-  if (status === "error") return "connection error";
-  if (status === "stopped") return "disconnected";
-  return "idle";
 }

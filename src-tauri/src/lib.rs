@@ -85,8 +85,12 @@ async fn auth_stop(state: State<'_, auth::AuthState>, attempt: String) -> Result
 async fn list_sessions(
     cwd: String,
     limit: Option<usize>,
+    cursor: Option<sessions::SessionCursor>,
+    scope: Option<String>,
+    query: Option<String>,
+    paths: Option<Vec<String>>,
 ) -> Result<sessions::SessionListing, String> {
-    sessions::list_sessions(&cwd, limit.unwrap_or(40)).await
+    sessions::list_sessions(&cwd, limit.unwrap_or(50), cursor, scope, query, paths).await
 }
 
 #[tauri::command]

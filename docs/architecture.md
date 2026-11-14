@@ -203,16 +203,32 @@ file, folds the fixed-width title slot into the header, keeps the first
 non-synthetic user message as preview, and hides untitled sessions with no
 prompt (matching the interactive picker).
 
-`list_sessions` discovers the main checkout and its linked worktrees through
-Git, then returns a `SessionListing` with a separate session list per directory.
-The sidebar keeps the main directory first and nests worktree directories with
-branch icons. Each directory keeps up to 40 sessions, newest first; non-Git
-folders retain a single directory group. Selecting a saved session reuses its
-open runtime, or starts another child in that directory and opens the file
-with `switch_session`. It never sends a switch command to another session's
-running child.
+`list_sessions` discovers the main checkout and linked worktrees through Git,
+including branch labels, and returns one chronological feed plus directory
+metadata. Pages use an exclusive `(modifiedMs, path)` cursor, with path ordering
+breaking timestamp ties. Scope and pinned-path filters apply before pagination.
+Global search matches titles, Worktree labels, and message content throughout
+the JSONL file; it is not restricted to the summary preview.
 
-- New session: start an independent runtime in the selected workspace.
+The sidebar has fixed Recent/Running/Pinned controls and a searchable Worktree
+popover above an independently scrolling, fixed-row virtualized list. Running
+state comes from live runtimes, including background Agent work. Session and
+Worktree pins, per-Worktree last sessions, view/scope preferences, and per-view
+scroll offsets persist locally. Session pages are cached separately from Agent
+runtime state, so selecting another conversation does not reset list navigation.
+Search temporarily spans all Worktrees without changing the selected scope.
+
+Selecting a saved session reuses its open runtime, or starts another child in
+that session's directory and opens the file with `switch_session`. It never
+sends a switch command to another session's running child. Selecting a Worktree
+filter restores that Worktree's last conversation; selecting All Worktrees only
+changes the list. Opening a session never changes the filter.
+
+- New session: start an independent runtime in the active session's Worktree,
+  falling back to the last selected Worktree and then the main checkout. Empty
+  sessions expose a Worktree selector beside the composer; changing the target
+  transfers the unsent draft to a new runtime. The Worktree is always visible
+  in the session header and near the composer.
 - Switch: select the existing runtime/store; hidden sessions keep processing
   frames, queued messages, tools and dialogs. The stable React store facade
   publishes only the selected store's state. Async actions retain their original

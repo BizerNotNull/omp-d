@@ -5,6 +5,7 @@ import { create, type StoreApi, type UseBoundStore } from "zustand";
 import { OmpClient, RpcFailure, type OmpClientEvent } from "./client";
 import { catalogCacheKey, readCatalog, splitExtraArgs, writeCatalog } from "./model-catalog";
 import { projectMessageBranches, sessionTreeFromEntries, type MessageBranch } from "./branches";
+import { configureSessionNavigation, rememberActiveSession, sessionPathKey, useSessionNavigation } from "./navigation";
 import type {
   AgentMessage,
   AvailableCommand,
@@ -29,6 +30,8 @@ import type {
 import { firstLine, imageBlocks, modelLabel, stripPrivateUse } from "./format";
 
 const LAST_CWD_KEY = "ompd:lastCwd";
+const LAST_SESSION_KEY = "ompd:lastSession";
+const LAST_PROJECT_KEY = "ompd:lastProject";
 const PREFS_KEY = "ompd:prefs";
 
 export interface Preferences {
@@ -101,12 +104,13 @@ export interface PendingMessage {
 export type ConnectionStatus = "idle" | "starting" | "ready" | "error" | "stopped";
 
 
-interface OpenSession {
+export interface OpenSession {
   id: number;
   path?: string;
   cwd?: string;
   title: string;
   busy: boolean;
+  modifiedMs: number;
   dialogs: number;
   status: ConnectionStatus;
 }
@@ -181,8 +185,8 @@ interface AppState {
   compact: () => Promise<void>;
   removeQueued: (message: string, queue: "steering" | "followUp") => Promise<void>;
 
-  newSession: () => Promise<void>;
-  switchSession: (path: string) => Promise<void>;
+  newSession: (targetCwd?: string) => Promise<void>;
+  switchSession: (path: string, cwd?: string) => Promise<void>;
   renameSession: (name: string) => Promise<void>;
 
   fetchModels: () => Promise<void>;
@@ -201,11 +205,12 @@ interface AppState {
 let toastSeq = 0;
 let noticeSeq = 0;
 let initialized = false;
+const runtimeModifiedTimes = new Map<number, number>();
 function createRuntimeStore(id: number, initialSessionPath?: string) {
 const omp = new OmpClient();
 let connectTicket = 0;
 let catalogRequest = 0;
-let sessionsRequest = 0;
+runtimeModifiedTimes.set(id, initialSessionPath ? 0 : Date.now());
 let refreshing: Promise<void> | undefined;
 let refreshAgain = false;
 let gitRefreshKey: string | undefined;
@@ -281,10 +286,26 @@ const runtime = create<AppState>()((set, get) => ({
 
   bootstrap: async () => {
     if (initialized) return;
+    if (get().cwd && get().status !== "idle") return;
     initialized = true;
     set({ initialized: true });
     // Each runtime subscribes at construction, including while it is hidden.
-    const cwd = localStorage.getItem(LAST_CWD_KEY);
+    let cwd = localStorage.getItem(LAST_CWD_KEY);
+    const previousSession = localStorage.getItem(LAST_SESSION_KEY);
+    const project = localStorage.getItem(LAST_PROJECT_KEY);
+    if (project) useSessionNavigation.setState({ repositoryCwd: project });
+    if (previousSession && cwd) {
+      try {
+        const listing = await invoke<SessionListing>("list_sessions", { cwd: project ?? cwd, paths: [previousSession], limit: 1 });
+        const previous = listing.sessions[0];
+        if (previous) {
+          initialSessionPath = previous.path;
+          cwd = previous.cwd;
+        }
+      } catch {
+        // Let connect report an unavailable project rather than fail bootstrap early.
+      }
+    }
     if (!cwd) {
       const initial = await invoke<string | null>("initial_folder");
       if (!initial) {
@@ -300,7 +321,9 @@ const runtime = create<AppState>()((set, get) => ({
   connect: async (cwd, prefs) => {
     const ticket = ++connectTicket;
     ++conversationRevision;
-    ++sessionsRequest;
+    runtimeModifiedTimes.set(id, initialSessionPath ? 0 : Date.now());
+    const entry = runtimes.get(id);
+    if (entry && initialSessionPath) entry.path = initialSessionPath;
     const preferences = { ...get().preferences, ...prefs };
     const cachedCatalog = readCatalog(catalogCacheKey(cwd, preferences));
     set({
@@ -311,8 +334,6 @@ const runtime = create<AppState>()((set, get) => ({
       ...cachedCatalog,
       modelsLoading: false,
       modelsError: undefined,
-      sessionListing: undefined,
-      sessionsLoading: true,
       messages: withMessageKeys([]).messages,
       messageKeys: new Set<string>(),
       pending: [],
@@ -419,6 +440,8 @@ const runtime = create<AppState>()((set, get) => ({
       if (omp.generation !== generation || revision !== conversationRevision) return;
       const session = state?.data;
       const transcript = messages?.data?.messages;
+      if (transcript) runtimeModifiedTimes.set(id, transcript.reduce((modified, message) =>
+        Math.max(modified, typeof message.timestamp === "number" ? message.timestamp : 0), runtimeModifiedTimes.get(id) ?? 0));
       if (session) {
         await syncSessionWorkspace(set, () => omp.generation === generation && revision === conversationRevision);
         if (omp.generation !== generation || revision !== conversationRevision) return;
@@ -533,6 +556,8 @@ const runtime = create<AppState>()((set, get) => ({
     try {
       const res = await omp.send<{ messages: AgentMessage[] }>({ type: "get_messages" });
       if (generation !== omp.generation || revision !== conversationRevision) return;
+      if (res.data?.messages) runtimeModifiedTimes.set(id, res.data.messages.reduce((modified, message) =>
+        Math.max(modified, typeof message.timestamp === "number" ? message.timestamp : 0), runtimeModifiedTimes.get(id) ?? 0));
       set((state) => ({
         ...withMessageKeys(res.data?.messages ?? []),
         messageBranches: state.sessionTree ? projectMessageBranches(state.sessionTree, res.data?.messages ?? []) : [],
@@ -557,19 +582,8 @@ const runtime = create<AppState>()((set, get) => ({
     return navigateConversation(set, get, entryId);
   },
   loadSessions: async () => {
-    const cwd = get().cwd;
-    if (!cwd) return;
-    const request = ++sessionsRequest;
-    set({ sessionsLoading: true });
-    try {
-      const sessionListing = await invoke<SessionListing>("list_sessions", { cwd, limit: 40 });
-      if (request !== sessionsRequest) return;
-      set({ sessionListing, sessionsLoading: false });
-    } catch (error) {
-      if (request !== sessionsRequest) return;
-      set({ sessionsLoading: false });
-      pushToast(set, "warning", `Session list failed: ${describeError(error)}`);
-    }
+    if (activeRuntime !== runtime) return;
+    await useSessionNavigation.getState().refresh();
   },
 
   prompt: async (text, images, behavior) => {
@@ -686,13 +700,17 @@ const runtime = create<AppState>()((set, get) => ({
     }
   },
 
-  newSession: async () => {
-    const { cwd, branching, status } = get();
-    if (!cwd || branching || status !== "ready") return;
-    await openRuntime(cwd);
+  newSession: async (targetCwd) => {
+    const state = get();
+    const navigation = useSessionNavigation.getState();
+    const cwd = targetCwd ?? state.cwd ?? navigation.recentWorktrees[0] ?? navigation.repositoryCwd;
+    if (!cwd || state.branching) return;
+    const draft = state.messages.length === 0 ? { draftText: state.draftText, draftImages: state.draftImages } : undefined;
+    const created = await openRuntime(cwd);
+    if (draft) created.setState(draft);
   },
 
-  switchSession: async (path) => {
+  switchSession: async (path, targetCwd) => {
     if (get().branching) return;
     const existing = [...runtimes.values()].find((entry) =>
       sessionPathKey(entry.store.getState().session?.sessionFile ?? entry.path) === sessionPathKey(path));
@@ -700,8 +718,9 @@ const runtime = create<AppState>()((set, get) => ({
       selectRuntime(existing.store.getState().activeRuntimeId);
       return;
     }
-    const directory = get().sessionListing?.directories.find((entry) => entry.sessions.some((session) => session.path === path));
-    const cwd = directory?.cwd ?? get().cwd;
+    const navigation = useSessionNavigation.getState();
+    const cwd = targetCwd ?? navigation.sessionListing?.sessions.find((entry) =>
+      sessionPathKey(entry.path) === sessionPathKey(path))?.cwd ?? get().cwd;
     if (cwd) await openRuntime(cwd, path);
   },
 
@@ -789,6 +808,9 @@ const runtime = create<AppState>()((set, get) => ({
   setEditorText: (text) => set((state) => ({ draftText: text, draftImages: [], editorToken: state.editorToken + 1 })),
 
   applyFrame: (frame) => {
+    if (frame.type === "message_start" || frame.type === "message_update" || frame.type === "message_end") {
+      runtimeModifiedTimes.set(id, Date.now());
+    }
     switch (frame.type) {
       case "message_start": {
         const messageId = String(frame.messageId ?? "");
@@ -1141,13 +1163,11 @@ function handleExtensionRequest(request: ExtensionUIRequest, set: SetState, get:
       if (request.statusKey === "ompd:workspace") {
         const cwd = request.statusText;
         if (!cwd || cwd === get().cwd) return;
-        ++sessionsRequest;
+        runtimeModifiedTimes.set(id, Date.now());
         ++catalogRequest;
         if (activeRuntime === runtime) localStorage.setItem(LAST_CWD_KEY, cwd);
         set({
           cwd,
-          sessionListing: undefined,
-          sessionsLoading: false,
           gitStatus: undefined,
           gitStatusError: undefined,
           ...readCatalog(catalogCacheKey(cwd, get().preferences)),
@@ -1218,6 +1238,24 @@ runtimes.set(runtimeSequence, { store: activeRuntime });
 // store/client, so completion in a hidden session never mutates the selected one.
 export const useAppStore = create<AppState>()(() => activeRuntime.getState());
 
+configureSessionNavigation({
+  newSession: (cwd) => useAppStore.getState().newSession(cwd),
+  switchSession: (path, cwd) => useAppStore.getState().switchSession(path, cwd),
+  selectOpenSession: (cwd, path) => {
+    const entries = [...runtimes.values()];
+    const existing = path
+      ? entries.find((entry) => sessionPathKey(entry.store.getState().session?.sessionFile ?? entry.path) === sessionPathKey(path))
+      : entries.find((entry) => sessionPathKey(entry.store.getState().cwd) === sessionPathKey(cwd));
+    if (!existing) return false;
+    selectRuntime(existing.store.getState().activeRuntimeId);
+    return true;
+  },
+});
+useSessionNavigation.subscribe(({ repositoryCwd, sessionListing, sessionsLoading }) => {
+  if (repositoryCwd) localStorage.setItem(LAST_PROJECT_KEY, repositoryCwd);
+  useAppStore.setState({ sessionListing, sessionsLoading });
+});
+
 function publishRuntimes() {
   const openSessions = [...runtimes].map(([id, { store, path }]): OpenSession => {
     const state = store.getState();
@@ -1226,12 +1264,27 @@ function publishRuntimes() {
       path: state.session?.sessionFile ?? path,
       cwd: state.cwd,
       title: sessionTitle(state.session),
-      busy: state.busy,
+      modifiedMs: Math.max(runtimeModifiedTimes.get(id) ?? 0,
+        useSessionNavigation.getState().sessionListing?.sessions.find((session) =>
+          sessionPathKey(session.path) === sessionPathKey(state.session?.sessionFile ?? path))?.modifiedMs ?? 0),
+      busy: state.busy || Boolean(state.session?.hasPendingAsyncWork),
       dialogs: state.dialogs.length,
       status: state.status,
     };
   });
-  useAppStore.setState({ ...activeRuntime.getState(), openSessions }, true);
+  const navigation = useSessionNavigation.getState();
+  useAppStore.setState({ ...activeRuntime.getState(), openSessions,
+    sessionListing: navigation.sessionListing, sessionsLoading: navigation.sessionsLoading }, true);
+  const active = activeRuntime.getState();
+  if (active.cwd) {
+    const path = active.session?.sessionFile ?? runtimes.get(active.activeRuntimeId)?.path;
+    rememberActiveSession(active.cwd, path);
+    localStorage.setItem(LAST_CWD_KEY, active.cwd);
+    const project = useSessionNavigation.getState().repositoryCwd;
+    if (project) localStorage.setItem(LAST_PROJECT_KEY, project);
+    if (path) localStorage.setItem(LAST_SESSION_KEY, path);
+    else localStorage.removeItem(LAST_SESSION_KEY);
+  }
 }
 
 activeRuntime.subscribe(publishRuntimes);
@@ -1249,8 +1302,9 @@ function selectRuntime(id: number) {
 
 async function openRuntime(cwd: string, path?: string) {
   if (!path && !activeRuntime.getState().cwd && activeRuntime.getState().status === "idle") {
-    await activeRuntime.getState().connect(cwd);
-    return;
+    const store = activeRuntime;
+    await store.getState().connect(cwd);
+    return store;
   }
   const id = ++runtimeSequence;
   const store = createRuntimeStore(id, path);
@@ -1259,19 +1313,15 @@ async function openRuntime(cwd: string, path?: string) {
   store.subscribe(publishRuntimes);
   selectRuntime(id);
   await store.getState().connect(cwd);
+  return store;
 }
 
-function sessionPathKey(path: string | undefined) {
-  if (!path) return undefined;
-  const normalized = path.replace(/\\/g, "/");
-  return /^[a-z]:\//i.test(normalized) ? normalized.toLowerCase() : normalized;
-}
 
 /* --------------------------------------------------------------- utilities */
 
 export function sessionTitle(session: RpcSessionState | undefined, fallback = "Untitled session"): string {
   if (!session) return fallback;
-  const title = stripPrivateUse(session.sessionName ?? "");
+  const title = stripPrivateUse(session.sessionName || session.sessionTitle || "");
   if (title) return title;
   return fallback;
 }

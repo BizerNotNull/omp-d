@@ -4,12 +4,12 @@
 //! Each file starts with a fixed-width title slot followed by a session header.
 
 use std::fs::File;
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::process::Command;
 
@@ -32,19 +32,29 @@ pub struct SessionSummary {
 pub struct SessionListing {
     pub repository_cwd: String,
     pub directories: Vec<SessionDirectory>,
+    pub sessions: Vec<SessionSummary>,
+    pub next_cursor: Option<SessionCursor>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionCursor {
+    pub modified_ms: u64,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionDirectory {
     pub cwd: String,
     pub is_worktree: bool,
-    pub sessions: Vec<SessionSummary>,
+    pub branch: Option<String>,
 }
 
 struct Worktree {
     cwd: PathBuf,
     bare: bool,
+    branch: Option<String>,
 }
 
 async fn git_worktrees(cwd: &Path) -> Result<Output, String> {
@@ -85,14 +95,16 @@ fn parse_worktrees(bytes: &[u8]) -> Result<Vec<Worktree>, String> {
                 return Err(invalid());
             }
             let path = std::str::from_utf8(path).map_err(|_| invalid())?;
-            current = Some(Worktree { cwd: PathBuf::from(path), bare: false });
+            current = Some(Worktree { cwd: PathBuf::from(path), bare: false, branch: None });
         } else {
             let worktree = current.as_mut().ok_or_else(invalid)?;
             if field == b"bare" {
                 worktree.bare = true;
+            } else if let Some(branch) = field.strip_prefix(b"branch ") {
+                let branch = std::str::from_utf8(branch).map_err(|_| invalid())?;
+                worktree.branch = Some(branch.strip_prefix("refs/heads/").unwrap_or(branch).to_owned());
             } else if field != b"detached"
                 && !field.starts_with(b"HEAD ")
-                && !field.starts_with(b"branch ")
                 && field != b"locked"
                 && !field.starts_with(b"locked ")
                 && field != b"prunable"
@@ -108,15 +120,23 @@ fn parse_worktrees(bytes: &[u8]) -> Result<Vec<Worktree>, String> {
     Ok(worktrees)
 }
 
-async fn discover_directories(cwd: &Path) -> Result<(PathBuf, Vec<(PathBuf, bool)>), String> {
+async fn discover_directories(cwd: &Path) -> Result<(PathBuf, Vec<SessionDirectory>), String> {
     let output = tokio::time::timeout(Duration::from_secs(5), git_worktrees(cwd))
         .await
         .map_err(|_| "Git worktree discovery timed out after 5 seconds".to_string())??;
+    let cwd = cwd.to_path_buf();
+    tokio::task::spawn_blocking(move || directories_from_git(&cwd, output))
+        .await.map_err(|error| format!("Session discovery failed: {error}"))?
+}
+
+fn directories_from_git(cwd: &Path, output: Output) -> Result<(PathBuf, Vec<SessionDirectory>), String> {
     if !output.status.success() {
         if output.status.code() == Some(128)
             && output.stderr.starts_with(b"fatal: not a git repository (or any ")
         {
-            return Ok((cwd.to_path_buf(), vec![(cwd.to_path_buf(), false)]));
+            return Ok((cwd.to_path_buf(), vec![SessionDirectory {
+                cwd: normalize_path(cwd), is_worktree: false, branch: None,
+            }]));
         }
         return Err(format!(
             "Git worktree discovery failed ({}): {}",
@@ -125,7 +145,8 @@ async fn discover_directories(cwd: &Path) -> Result<(PathBuf, Vec<(PathBuf, bool
         ));
     }
     let worktrees = parse_worktrees(&output.stdout)?;
-    let mut directories = Vec::with_capacity(worktrees.len() + 1);
+    let mut directories: Vec<SessionDirectory> = Vec::with_capacity(worktrees.len() + 1);
+    let mut repository = None;
     for (index, worktree) in worktrees.into_iter().enumerate() {
         // Retain missing/prunable registrations and their saved session buckets;
         // discovery must never prune or silently discard the user's worktrees.
@@ -147,22 +168,29 @@ async fn discover_directories(cwd: &Path) -> Result<(PathBuf, Vec<(PathBuf, bool
             Err(error) => return Err(format!("Cannot open worktree {}: {error}", worktree.cwd.display())),
         };
         if (path.exists() && !path.is_dir())
-            || directories.iter().any(|(existing, _)| existing == &path)
+            || directories.iter().any(|directory| same_path(&directory.cwd, &normalize_path(&path)))
         {
             return Err(format!("Invalid worktree directory {}", path.display()));
         }
-        directories.push((path, index != 0));
+        if index == 0 {
+            repository = Some(path.clone());
+        }
+        directories.push(SessionDirectory {
+            cwd: normalize_path(&path), is_worktree: index != 0, branch: worktree.branch,
+        });
     }
     // Git guarantees that the main repository is the first porcelain record.
-    let repository = directories[0].0.clone();
-    if !directories.iter().any(|(path, _)| path == cwd) {
+    let repository = repository.ok_or_else(|| "Git returned no repository".to_string())?;
+    if !directories.iter().any(|directory| same_path(&directory.cwd, &normalize_path(cwd))) {
         let containing = directories.iter()
-            .filter(|(path, _)| cwd.starts_with(path))
-            .max_by_key(|(path, _)| path.components().count())
+            .filter(|directory| Path::new(&normalize_path(cwd)).starts_with(&directory.cwd))
+            .max_by_key(|directory| Path::new(&directory.cwd).components().count())
             .ok_or_else(|| "Active directory is absent from Git's worktree listing".to_string())?;
-        directories.push((cwd.to_path_buf(), containing.1));
+        directories.push(SessionDirectory {
+            cwd: normalize_path(cwd), is_worktree: containing.is_worktree, branch: containing.branch.clone(),
+        });
     }
-    directories[1..].sort_by(|a, b| a.0.cmp(&b.0));
+    directories[1..].sort_by(|a, b| a.cwd.cmp(&b.cwd));
     Ok((repository, directories))
 }
 
@@ -268,26 +296,258 @@ fn session_dir_for(cwd: &Path, root: &Path) -> PathBuf {
     root.join(name)
 }
 
-pub async fn list_sessions(cwd: &str, limit: usize) -> Result<SessionListing, String> {
-    let resolved = std::fs::canonicalize(cwd).map_err(|e| format!("Cannot open {cwd}: {e}"))?;
+pub async fn list_sessions(
+    cwd: &str,
+    limit: usize,
+    cursor: Option<SessionCursor>,
+    scope: Option<String>,
+    query: Option<String>,
+    paths: Option<Vec<String>>,
+) -> Result<SessionListing, String> {
+    let cwd = cwd.to_owned();
+    let resolved = tokio::task::spawn_blocking(move || {
+        std::fs::canonicalize(&cwd).map_err(|error| format!("Cannot open {cwd}: {error}"))
+    }).await.map_err(|error| format!("Session discovery failed: {error}"))??;
     let (repository, directories) = discover_directories(&resolved).await?;
-    listing_from_directories(repository, directories, &sessions_root(), limit)
+    tokio::task::spawn_blocking(move || {
+        listing_from_directories(repository, directories, &sessions_root(), limit,
+            cursor.as_ref(), scope.as_deref(), query.as_deref(), paths.as_deref())
+    }).await.map_err(|error| format!("Session listing failed: {error}"))?
+}
+
+fn same_path(a: &str, b: &str) -> bool {
+    let a = normalize_path(Path::new(a));
+    let b = normalize_path(Path::new(b));
+    #[cfg(windows)]
+    { a.eq_ignore_ascii_case(&b) }
+    #[cfg(not(windows))]
+    { a == b }
 }
 
 fn listing_from_directories(
     repository: PathBuf,
-    directories: Vec<(PathBuf, bool)>,
+    directories: Vec<SessionDirectory>,
     root: &Path,
     limit: usize,
+    cursor: Option<&SessionCursor>,
+    scope: Option<&str>,
+    query: Option<&str>,
+    paths: Option<&[String]>,
 ) -> Result<SessionListing, String> {
-    let directories = directories.into_iter().map(|(cwd, is_worktree)| {
-        let sessions = read_bucket(&session_dir_for(&cwd, root), &cwd, limit)?;
-        Ok(SessionDirectory { cwd: normalize_path(&cwd), is_worktree, sessions })
-    }).collect::<Result<Vec<_>, String>>()?;
-    Ok(SessionListing { repository_cwd: normalize_path(&repository), directories })
+    let query = query.map(str::trim).filter(|query| !query.is_empty()).map(str::to_lowercase);
+    let mut candidates = Vec::new();
+    for directory in &directories {
+        if scope.is_some_and(|scope| !same_path(scope, &directory.cwd)) {
+            continue;
+        }
+        let cwd = Path::new(&directory.cwd);
+        let directory_matches = query.as_ref().is_some_and(|query| {
+            directory.branch.as_ref().is_some_and(|branch| branch.to_lowercase().contains(query))
+                || cwd.file_name().is_some_and(|name| name.to_string_lossy().to_lowercase().contains(query))
+        });
+        candidates.extend(read_bucket(&session_dir_for(cwd, root), cwd, paths)?
+            .into_iter().map(|file| (file, directory_matches)));
+    }
+    candidates.sort_by(|(a, _), (b, _)| b.modified_ms.cmp(&a.modified_ms).then_with(|| a.path.cmp(&b.path)));
+    candidates.dedup_by(|(a, _), (b, _)| a.path == b.path);
+    let limit = limit.max(1);
+    let mut sessions = Vec::new();
+    for (file, directory_matches) in candidates {
+        if cursor.is_some_and(|cursor| file.modified_ms > cursor.modified_ms
+            || (file.modified_ms == cursor.modified_ms && file.path <= cursor.path))
+        {
+            continue;
+        }
+        let path = Path::new(&file.path);
+        let Some(summary) = read_summary(path, Path::new(&file.cwd), file.modified_ms, file.size) else {
+            continue;
+        };
+        // Keep unused sessions hidden, but do not mistake an oversized first
+        // message (outside the preview window) for an unused session.
+        if summary.title.is_none() && summary.preview.is_none() && !session_matches(path, "") {
+            continue;
+        }
+        if let Some(query) = &query
+            && !directory_matches && !session_matches(path, query)
+        {
+            continue;
+        }
+        sessions.push(summary);
+        if sessions.len() > limit {
+            break;
+        }
+    }
+    let has_more = sessions.len() > limit;
+    sessions.truncate(limit);
+    let next_cursor = if has_more {
+        sessions.last().map(|session| SessionCursor {
+            modified_ms: session.modified_ms, path: session.path.clone(),
+        })
+    } else { None };
+    Ok(SessionListing { repository_cwd: normalize_path(&repository), directories, sessions, next_cursor })
 }
 
-fn read_bucket(dir: &Path, cwd: &Path, limit: usize) -> Result<Vec<SessionSummary>, String> {
+/// Scan decoded JSON string values without retaining a line or message. A single
+/// tool-result line can be gigabytes long; memory stays O(query + nesting).
+fn session_matches(path: &Path, query: &str) -> bool {
+    let Ok(file) = File::open(path) else { return false };
+    let mut reader = BufReader::new(file);
+    let pattern: Vec<char> = query.chars().collect();
+    let mut fallback = vec![0; pattern.len()];
+    for index in 1..pattern.len() {
+        let mut matched = fallback[index - 1];
+        while matched > 0 && pattern[index] != pattern[matched] {
+            matched = fallback[matched - 1];
+        }
+        if pattern[index] == pattern[matched] {
+            matched += 1;
+        }
+        fallback[index] = matched;
+    }
+    struct Frame {
+        object: bool,
+        expecting_key: bool,
+        searchable: bool,
+        message: bool,
+        key: String,
+    }
+    let mut stack: Vec<Frame> = Vec::new();
+    while let Some(byte) = next_byte(&mut reader) {
+        let searchable = stack.last().is_some_and(|frame|
+            (frame.searchable && frame.key != "type")
+                || (stack.len() == 1 && frame.key == "title")
+                || (frame.message && matches!(frame.key.as_str(), "content" | "text" | "output")));
+        let message = stack.len() == 1 && stack.last().is_some_and(|frame| frame.key == "message");
+        match byte {
+            b'{' | b'[' => {
+                if stack.len() == 128 {
+                    return false;
+                }
+                stack.push(Frame {
+                    object: byte == b'{', expecting_key: byte == b'{', searchable, message, key: String::new(),
+                });
+            }
+            b'}' | b']' => { stack.pop(); }
+            b',' => {
+                if let Some(frame) = stack.last_mut() {
+                    frame.expecting_key = frame.object;
+                    frame.key.clear();
+                }
+            }
+            b'"' => {
+                let is_key = stack.last().is_some_and(|frame| frame.expecting_key);
+                let mut key = String::new();
+                let mut matched = 0;
+                loop {
+                    let Some(byte) = next_byte(&mut reader) else { return false };
+                    if byte == b'"' {
+                        break;
+                    }
+                    let Some(ch) = json_character(&mut reader, byte) else { return false };
+                    if is_key {
+                        if key.len() < 64 {
+                            key.push(ch);
+                        }
+                    } else if searchable {
+                        if pattern.is_empty() {
+                            if !ch.is_whitespace() {
+                                return true;
+                            }
+                            continue;
+                        }
+                        for ch in ch.to_lowercase() {
+                            while matched > 0 && ch != pattern[matched] {
+                                matched = fallback[matched - 1];
+                            }
+                            if ch == pattern[matched] {
+                                matched += 1;
+                            }
+                            if matched == pattern.len() {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                if is_key {
+                    if let Some(frame) = stack.last_mut() {
+                        frame.key = key;
+                        frame.expecting_key = false;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn next_byte(reader: &mut impl BufRead) -> Option<u8> {
+    let byte = *reader.fill_buf().ok()?.first()?;
+    reader.consume(1);
+    Some(byte)
+}
+
+fn json_character(reader: &mut impl BufRead, byte: u8) -> Option<char> {
+    if byte == b'\\' {
+        return match next_byte(reader)? {
+            b'"' => Some('"'),
+            b'\\' => Some('\\'),
+            b'/' => Some('/'),
+            b'b' => Some('\u{8}'),
+            b'f' => Some('\u{c}'),
+            b'n' => Some('\n'),
+            b'r' => Some('\r'),
+            b't' => Some('\t'),
+            b'u' => {
+                let first = json_hex_quad(reader)?;
+                let codepoint = if (0xd800..=0xdbff).contains(&first) {
+                    if next_byte(reader)? != b'\\' || next_byte(reader)? != b'u' {
+                        return None;
+                    }
+                    let second = json_hex_quad(reader)?;
+                    if !(0xdc00..=0xdfff).contains(&second) {
+                        return None;
+                    }
+                    0x10000 + ((first - 0xd800) << 10) + second - 0xdc00
+                } else { first };
+                char::from_u32(codepoint)
+            }
+            _ => None,
+        };
+    }
+    if byte.is_ascii() {
+        return Some(byte as char);
+    }
+    let length = match byte {
+        0xc2..=0xdf => 2,
+        0xe0..=0xef => 3,
+        0xf0..=0xf4 => 4,
+        _ => return None,
+    };
+    let mut bytes = [0; 4];
+    bytes[0] = byte;
+    for slot in &mut bytes[1..length] {
+        *slot = next_byte(reader)?;
+    }
+    std::str::from_utf8(&bytes[..length]).ok()?.chars().next()
+}
+
+fn json_hex_quad(reader: &mut impl BufRead) -> Option<u32> {
+    let mut value = 0;
+    for _ in 0..4 {
+        value = value * 16 + (next_byte(reader)? as char).to_digit(16)?;
+    }
+    Some(value)
+}
+
+struct SessionFile {
+    path: String,
+    cwd: String,
+    modified_ms: u64,
+    size: u64,
+}
+
+fn read_bucket(dir: &Path, cwd: &Path, paths: Option<&[String]>) -> Result<Vec<SessionFile>, String> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -300,6 +560,9 @@ fn read_bucket(dir: &Path, cwd: &Path, limit: usize) -> Result<Vec<SessionSummar
         if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
             continue;
         }
+        if paths.is_some_and(|paths| !paths.iter().any(|candidate| same_path(candidate, &normalize_path(&path)))) {
+            continue;
+        }
         let Ok(meta) = entry.metadata() else { continue };
         if !meta.is_file() {
             continue;
@@ -310,18 +573,11 @@ fn read_bucket(dir: &Path, cwd: &Path, limit: usize) -> Result<Vec<SessionSummar
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
-        let Some(summary) = read_summary(&path, cwd, modified_ms, meta.len()) else {
-            continue;
-        };
-        // Match the picker: hide untitled, prompt-less sessions opened but never used.
-        if summary.title.is_none() && summary.preview.is_none() {
-            continue;
-        }
-        sessions.push(summary);
+        sessions.push(SessionFile {
+            path: normalize_path(&path), cwd: normalize_path(cwd), modified_ms, size: meta.len(),
+        });
     }
 
-    sessions.sort_by(|a, b| b.modified_ms.cmp(&a.modified_ms));
-    sessions.truncate(limit);
     Ok(sessions)
 }
 
@@ -492,7 +748,13 @@ mod tests {
         let linked = std::fs::canonicalize(linked).unwrap();
         let (repository, directories) = discover_directories(&main).await.unwrap();
         assert_eq!(repository, main);
-        assert_eq!(directories, vec![(main.clone(), false), (linked.clone(), true)]);
+        assert_eq!(directories.len(), 2);
+        assert_eq!(directories[0].cwd, normalize_path(&main));
+        assert!(!directories[0].is_worktree);
+        assert!(directories[0].branch.is_some());
+        assert_eq!(directories[1].cwd, normalize_path(&linked));
+        assert!(directories[1].is_worktree);
+        assert_eq!(directories[1].branch, None);
         assert_eq!(discover_directories(&linked).await.unwrap(), (repository.clone(), directories.clone()));
 
         let root = temp.0.join("sessions");
@@ -500,29 +762,29 @@ mod tests {
         write_session(&root, &main, "hidden", None);
         write_session(&root, &linked, "linked-one", Some("Linked one"));
         write_session(&root, &linked, "linked-two", Some("Linked two"));
-        let listing = listing_from_directories(repository, directories, &root, 1).unwrap();
-        assert_eq!(listing.directories[0].sessions.len(), 1);
-        assert_eq!(listing.directories[0].sessions[0].session_id, "main");
-        assert_eq!(listing.directories[1].sessions.len(), 1);
-        assert!(listing.directories[1].sessions[0].session_id.starts_with("linked-"));
+        let listing = listing_from_directories(repository, directories, &root, 1, None, None, None, None).unwrap();
+        assert_eq!(listing.sessions.len(), 1);
+        assert_eq!(listing.directories.len(), 2);
+        assert!(listing.next_cursor.is_some());
 
         for (checkout, is_worktree) in [(&main, false), (&linked, true)] {
             let subdir = checkout.join("nested");
             std::fs::create_dir(&subdir).unwrap();
             let (repository, directories) = discover_directories(&subdir).await.unwrap();
             assert_eq!(repository, main);
-            assert!(directories.contains(&(subdir.clone(), is_worktree)));
-            let listing = listing_from_directories(repository, directories, &root, 40).unwrap();
-            assert!(listing.directories.iter().find(|dir| dir.cwd == normalize_path(&subdir))
-                .unwrap().sessions.is_empty());
+            assert!(directories.iter().any(|directory|
+                directory.cwd == normalize_path(&subdir) && directory.is_worktree == is_worktree));
+            let listing = listing_from_directories(repository, directories, &root, 40, None, None, None, None).unwrap();
+            assert!(listing.directories.iter().any(|directory| directory.cwd == normalize_path(&subdir)));
+            assert!(!listing.sessions.iter().any(|session| session.cwd == normalize_path(&subdir)));
         }
 
         // Saved buckets remain reachable after a registered checkout disappears.
         std::fs::remove_dir_all(&linked).unwrap();
         let (repository, directories) = discover_directories(&main).await.unwrap();
-        assert!(directories.contains(&(linked.clone(), true)));
-        let listing = listing_from_directories(repository, directories, &root, 40).unwrap();
-        assert_eq!(listing.directories.iter().find(|dir| dir.is_worktree).unwrap().sessions.len(), 2);
+        assert!(directories.iter().any(|directory| directory.cwd == normalize_path(&linked) && directory.is_worktree));
+        let listing = listing_from_directories(repository, directories, &root, 40, None, None, None, None).unwrap();
+        assert_eq!(listing.sessions.iter().filter(|session| session.cwd == normalize_path(&linked)).count(), 2);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -530,7 +792,9 @@ mod tests {
         let temp = TempDir::new();
         let (repository, directories) = discover_directories(&temp.0).await.unwrap();
         assert_eq!(repository, temp.0);
-        assert_eq!(directories, vec![(temp.0.clone(), false)]);
+        assert_eq!(directories, vec![SessionDirectory {
+            cwd: normalize_path(&temp.0), is_worktree: false, branch: None,
+        }]);
         fixture_git(&temp.0, &["init", "--bare"]).await;
         assert_eq!(discover_directories(&temp.0).await.unwrap(), (repository, directories));
     }
@@ -544,9 +808,91 @@ mod tests {
         assert_eq!(trees.len(), 2);
         assert_eq!(trees[0].cwd, PathBuf::from("/repo with\nnewline"));
         assert!(!trees[1].bare);
+        assert_eq!(trees[0].branch.as_deref(), Some("main"));
+        assert_eq!(trees[1].branch, None);
         assert!(parse_worktrees(b"worktree /repo\0HEAD abc\0").is_err());
         assert!(parse_worktrees(b"HEAD abc\0\0").is_err());
         assert!(parse_worktrees(b"worktree /repo\0unknown field\0\0").is_err());
+    }
+
+    fn directory(cwd: &Path, branch: &str) -> SessionDirectory {
+        SessionDirectory {
+            cwd: normalize_path(cwd), is_worktree: false, branch: Some(branch.to_owned()),
+        }
+    }
+
+    #[test]
+    fn flat_pages_cover_all_history_with_exclusive_tied_cursors() {
+        let temp = TempDir::new();
+        let main = temp.0.join("main");
+        let linked = temp.0.join("linked");
+        let root = temp.0.join("sessions");
+        let directories = vec![directory(&main, "main"), directory(&linked, "feature")];
+        let timestamp = std::time::UNIX_EPOCH + Duration::from_secs(123456);
+        for index in 0..83 {
+            let cwd = if index % 2 == 0 { &main } else { &linked };
+            let id = format!("session-{index:03}");
+            write_session(&root, cwd, &id, Some(&id));
+            File::options().write(true).open(session_dir_for(cwd, &root).join(format!("{id}.jsonl")))
+                .unwrap().set_times(std::fs::FileTimes::new().set_modified(timestamp)).unwrap();
+        }
+        let mut cursor = None;
+        let mut seen = Vec::new();
+        loop {
+            let page = listing_from_directories(main.clone(), directories.clone(), &root, 7,
+                cursor.as_ref(), None, None, None).unwrap();
+            assert_eq!(page.directories, directories);
+            assert!(page.sessions.len() <= 7);
+            assert!(page.sessions.iter().all(|session| session.modified_ms == 123456000));
+            seen.extend(page.sessions.into_iter().map(|session| session.path));
+            cursor = page.next_cursor;
+            if cursor.is_none() { break; }
+        }
+        assert_eq!(seen.len(), 83);
+        assert!(seen.windows(2).all(|pair| pair[0] < pair[1]));
+    }
+
+    #[test]
+    fn filters_precede_pages_and_search_streams_late_decoded_message_text() {
+        let temp = TempDir::new();
+        let main = temp.0.join("checkout");
+        let linked = temp.0.join("linked-name");
+        let root = temp.0.join("sessions");
+        let directories = vec![directory(&main, "main"), directory(&linked, "topic/needle")];
+        for index in 0..61 {
+            let id = format!("new-{index:03}");
+            write_session(&root, &main, &id, Some("Recent"));
+        }
+        write_session(&root, &main, "old", None);
+        let old = session_dir_for(&main, &root).join("old.jsonl");
+        let mut file = File::options().append(true).open(&old).unwrap();
+        use std::io::Write;
+        write!(file, "{{\"type\":\"message\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"{}Late \\u4e2d\\u6587 \\ud83d\\ude80 needle\"}}]}}}}\n",
+            "padding".repeat(20000)).unwrap();
+        file.set_times(std::fs::FileTimes::new().set_modified(std::time::UNIX_EPOCH + Duration::from_secs(1))).unwrap();
+        write_session(&root, &linked, "linked", Some("Linked"));
+
+        let page = listing_from_directories(main.clone(), directories.clone(), &root, 1,
+            None, Some(&normalize_path(&main)), Some("中文 🚀 NEEDLE"), None).unwrap();
+        assert_eq!(page.sessions.len(), 1);
+        assert_eq!(page.sessions[0].session_id, "old");
+        assert!(page.next_cursor.is_none());
+        let pinned = vec![normalize_path(&old)];
+        let page = listing_from_directories(main.clone(), directories.clone(), &root, 1,
+            None, None, None, Some(&pinned)).unwrap();
+        assert_eq!(page.sessions[0].session_id, "old");
+        assert!(page.next_cursor.is_none());
+        for query in ["topic/needle", "linked-name"] {
+            let page = listing_from_directories(main.clone(), directories.clone(), &root, 1,
+                None, None, Some(query), None).unwrap();
+            assert_eq!(page.sessions[0].session_id, "linked");
+        }
+        assert!(listing_from_directories(main, directories, &root, 1,
+            None, None, None, Some(&[])).unwrap().sessions.is_empty());
+        assert!(!session_matches(&old, "never-present"));
+        assert!(!session_matches(&old, "assistant"));
+        assert!(!session_matches(&old, "text"));
+        assert!(session_matches(&old, ""));
     }
 
 

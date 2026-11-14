@@ -3,27 +3,16 @@
 ## Unreleased
 
 ### Added
-- Keep open sessions running in independent background runtimes when switching sessions, starting a new session, or opening another workspace. Preserve each session's streaming state, queues, dialogs and composer draft; show background activity and pending input in Open sessions.
-- Render SVG and Mermaid fences, theme-aware SVG image blocks, previews of written `.svg`/`.mmd`/`.mermaid` files, and numeric comparison charts below compatible tables. Figures remain visible in collapsed tool cards; partial tool-result images appear during execution.
-- Embedded xterm.js terminal backed by native PTYs: workspace shells, persistent hidden tabs, resizable/maximizable bottom panel, keyboard toggle, exit status, and process-tree cleanup.
-- Edit sent user messages with a pencil and Save & fork in the current omp session, using its `/tree` navigation. The edited prompt is sent to the agent; original branches and image attachments remain available.
-- Per-message branch counters and previous/next arrows restore saved conversation tails in the same session without resubmitting prompts.
-- Group Recent Sessions under the main repository directory, with nested linked-worktree directories marked by a branch icon.
-- Show an in-progress spinner beside the active session in Recent while the agent is working.
+- Unified session-first navigation across Worktrees: Recent, Running and Pinned views, global full-content search, searchable Worktree filtering, cursor-paginated virtualized history, cached pages and remembered scroll positions
+- Persist session/Worktree pins and last-opened conversations; restore each Worktree's session without changing the list when opening a conversation directly
+- Show the execution Worktree in the session header and composer, with target selection before the first message
 
-### Fixed
-- Remove the PID label from the sidebar status footer.
-- Replace the split top headers with one compact workspace-wide toolbar, flat model/thinking selectors, and a single Settings button; remove repeated sidebar branding.
-- Restore the missing React effect import in ChatView so the frontend builds after the chat-scroll merge.
-- Use the pen beside the Recent repository name to start a new session; remove the separate New session button.
-- Remove the top-bar session-path copy, context compaction, and new-session controls.
-- Keep chat auto-scroll following across tool/content resizes and viewport changes; preserve reading position when scrolled up and restore following with Jump to latest.
-- Show a conversation spinner while waiting for the first model token, including before an assistant message starts and while its content is empty.
-- Follow the relocated session directory after `/wt` and `/move` without restarting the agent; refresh the workspace, recent sessions, model catalog, and Git status.
-- Reconcile the workspace when local slash commands finish, even when the observed session-file path is unchanged; keep internal workspace-query completions out of user turn state.
-- Display slash-command errors from `command_output` as error notifications and retain command output in Activity, including `/wt` branch-name conflicts.
-- Fix long-chat page/input freezes: load flat session entries instead of nested tree responses, and keep branch metadata loading independent of transcript hydration and composer controls.
-- Keep `bun tauri dev` open during `/wt <branch>` by disabling native watcher auto-restarts; frontend hot reload remains enabled. Use `bunx tauri dev` to opt into native watching
+### Changed
+- Keep open sessions running in independent background runtimes when switching sessions, starting a new session, or opening another workspace, preserving streaming state, queues, dialogs and composer drafts
+
+### Removed
+- Group Recent Sessions under the main repository directory with nested linked-worktree directories marked by a branch icon
+- Use the pen beside the Recent repository name to start a new session; remove the separate New session button
 ## 0.1.0 — 2026-11-06
 
 Initial desktop client for Oh My Pi.

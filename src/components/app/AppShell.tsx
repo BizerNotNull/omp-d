@@ -78,15 +78,15 @@ export function AppShell() {
   return (
     <TooltipProvider>
       <div className="flex h-full w-full flex-col bg-background text-foreground">
-        {!modelsOpen && <TopBar
-          onOpenModels={() => setModelsOpen(true)}
-          onOpenSettings={() => setSettingsOpen(true)}
-          onTogglePanel={() => setPanelOpen((value) => !value)}
-          panelOpen={panelOpen}
-        />}
         <div className="flex min-h-0 flex-1">
           {!modelsOpen && <Sidebar />}
           <main className="relative flex min-w-0 flex-1 flex-col">
+            {!modelsOpen && <TopBar
+              onOpenModels={() => setModelsOpen(true)}
+              onOpenSettings={() => setSettingsOpen(true)}
+              onTogglePanel={() => setPanelOpen((value) => !value)}
+              panelOpen={panelOpen}
+            />}
             {modelsOpen && <div className={loginProvider ? "hidden" : "flex min-h-0 flex-1 flex-col"}><ModelPicker active={!loginProvider} onClose={() => setModelsOpen(false)} onLoginRequest={setLoginProvider} /></div>}
             {modelsOpen && loginProvider && <ProviderLogin key={`${cwd}:${loginProvider}`} provider={loginProvider} options={{ cwd, binary: preferences.binary.trim() || "omp", extraArgs: splitExtraArgs(preferences.extraArgs) }} onBack={() => setLoginProvider(undefined)} onSuccess={() => { setLoginProvider(undefined); void useAppStore.getState().fetchModels(); }} />}
             <div className={modelsOpen ? "hidden" : "flex min-h-0 flex-1 flex-col overflow-hidden"}>

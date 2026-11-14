@@ -3,6 +3,8 @@ import {
   Check,
   ChevronDown,
   LoaderCircle,
+  GitBranch,
+  Pin,
   MessageSquare,
   PanelRight,
   Pencil,
@@ -30,6 +32,8 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { useAppStore, sessionTitle } from "@/lib/omp/store";
 import { modelLabel } from "@/lib/omp/format";
+import { sessionPathKey, useSessionNavigation } from "@/lib/omp/navigation";
+import { worktreeName } from "./WorktreeSelector";
 
 export function TopBar({
   onOpenModels,
@@ -44,6 +48,12 @@ export function TopBar({
 }) {
   const session = useAppStore((state) => state.session);
   const busy = useAppStore((state) => state.busy);
+  const cwd = useAppStore((state) => state.cwd);
+  const status = useAppStore((state) => state.status);
+  const asyncWork = useAppStore((state) => state.session?.hasPendingAsyncWork);
+  const listing = useSessionNavigation((state) => state.sessionListing);
+  const pins = useSessionNavigation((state) => state.pinnedSessions);
+  const togglePin = useSessionNavigation((state) => state.toggleSessionPin);
   const thinkingLevels = useAppStore((state) => state.thinkingLevels);
   const setThinkingLevel = useAppStore((state) => state.setThinkingLevel);
   const renameSession = useAppStore((state) => state.renameSession);
@@ -51,26 +61,37 @@ export function TopBar({
   const [renameValue, setRenameValue] = useState("");
   const title = sessionTitle(session, session?.sessionId ? "Untitled session" : "New session");
   const level = session?.thinkingLevel ?? "off";
+  const directory = listing?.directories.find((item) => sessionPathKey(item.cwd) === sessionPathKey(cwd));
+  const pinned = pins.some((path) => sessionPathKey(path) === sessionPathKey(session?.sessionFile));
+  const running = busy || asyncWork;
 
   return (
     <header aria-label="Session toolbar" className="flex min-h-10 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b bg-sidebar px-3 py-1">
-      <div className="flex min-w-0 flex-1 basis-32 items-center gap-2">
-        {busy
-          ? <LoaderCircle aria-label="Agent working" className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+      <div className="flex min-w-0 flex-1 basis-40 items-center gap-2">
+        {running
+          ? <LoaderCircle aria-label="Agent running" className="size-3.5 shrink-0 animate-spin text-emerald-500 motion-reduce:animate-none" />
           : <MessageSquare aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />}
-        <button
-          type="button"
-          onClick={() => {
-            setRenameValue(session?.sessionName ?? "");
-            setRenameOpen(true);
-          }}
-          aria-label={`Rename session: ${title}`}
-          title={title}
-          className="group flex min-w-0 items-center gap-2 rounded px-1.5 py-1 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <span className="truncate text-xs">{title}</span>
-          <Pencil aria-hidden="true" className="size-3 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100" />
-        </button>
+        <div className="min-w-0">
+          <button
+            type="button"
+            onClick={() => {
+              setRenameValue(session?.sessionName ?? "");
+              setRenameOpen(true);
+            }}
+            aria-label={`Rename session: ${title}`}
+            title={title}
+            className="group flex min-w-0 max-w-full items-center gap-2 rounded py-1 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <span className="truncate text-xs">{title}</span>
+            <Pencil aria-hidden="true" className="size-3 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100" />
+          </button>
+          <div className="flex min-w-0 items-center gap-1 pb-1 text-[10px] text-muted-foreground" title={cwd}>
+            <GitBranch aria-hidden="true" className="size-3 shrink-0" />
+            <span className="truncate">{cwd ? worktreeName(cwd, directory?.branch) : "No Worktree"}</span>
+            <span className="shrink-0">· {running ? "Agent running" : status === "ready" ? "Idle" : status}</span>
+          </div>
+        </div>
+        {session?.sessionFile && <Button variant="ghost" size="icon-sm" aria-label={pinned ? "Unpin current session" : "Pin current session"} aria-pressed={pinned} onClick={() => togglePin(session.sessionFile!)} className="shrink-0 text-muted-foreground"><Pin className={cn("size-3.5", pinned && "fill-current")} /></Button>}
       </div>
 
       <div className="ml-auto flex min-w-0 max-w-full items-center gap-0.5">

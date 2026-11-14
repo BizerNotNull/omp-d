@@ -219,6 +219,7 @@ export interface RpcSessionState {
   sessionFile?: string;
   sessionId: string;
   sessionName?: string;
+  sessionTitle?: string;
   autoCompactionEnabled: boolean;
   fastModeEnabled?: boolean;
   fastModeActive?: boolean;
@@ -515,12 +516,19 @@ export interface SessionSummary {
 export interface SessionDirectory {
   cwd: string;
   isWorktree: boolean;
-  sessions: SessionSummary[];
+  branch?: string | null;
 }
 
 export interface SessionListing {
   repositoryCwd: string;
   directories: SessionDirectory[];
+  sessions: SessionSummary[];
+  nextCursor?: SessionCursor | null;
+}
+
+export interface SessionCursor {
+  modifiedMs: number;
+  path: string;
 }
 
 export interface ProcessEvent {

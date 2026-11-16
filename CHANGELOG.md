@@ -2,16 +2,8 @@
 
 ## Unreleased
 
-### Added
-- Centralized, environment-isolated JSONL diagnostics with bounded background logging and automatic IPC timing
-- Frontend error categories for window errors, unhandled rejections and React boundaries
-- Opt-in Puffin captures for native dispatch and RPC processing
-
-### Changed
-- Keep untouched new sessions out of history and resume preferences; reuse an empty composer in the same worktree
-
 ### Fixed
-- RPC completion rejections now settle the pending entry instead of an undefined binding
+- Slash-command autocomplete now shows every matching command, including all runtime skills, and scrolls to keyboard-selected entries
 ## 0.1.0 — 2026-11-06
 
 Initial desktop client for Oh My Pi.

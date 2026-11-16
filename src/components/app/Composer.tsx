@@ -33,6 +33,7 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
   const [submitting, setSubmitting] = useState(false);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const suggestionsRef = useRef<HTMLDivElement | null>(null);
   const lastEditorToken = useRef(0);
   const sendingRef = useRef(false);
 
@@ -83,12 +84,16 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
       ].map(([name, description]) => ({ name: `goal ${name}`, description, source: "builtin" })),
       ...commands.filter((command) => !["model", "models", "settings", "goal", "guided-goal"].includes(command.name)),
     ];
-    return available
-      .filter((command) => command.name.toLowerCase().startsWith(query) && (query.includes(" ") || !command.name.includes(" ")))
-      .slice(0, 8);
+    return available.filter(
+      (command) => command.name.toLowerCase().startsWith(query) && (query.includes(" ") || !command.name.includes(" ")),
+    );
   }, [commands, commandQuery]);
 
   useEffect(() => setSuggestionIndex(0), [commandQuery]);
+
+  useEffect(() => {
+    suggestionsRef.current?.children[suggestionIndex]?.scrollIntoView({ block: "nearest" });
+  }, [suggestionIndex, suggestions]);
 
   const disabled = status !== "ready" || submitting || branching;
 
@@ -263,7 +268,7 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
               <div className="border-b px-3 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
                 Slash commands
               </div>
-              <div className="max-h-64 overflow-y-auto p-1">
+              <div ref={suggestionsRef} className="max-h-64 overflow-y-auto p-1">
                 {suggestions.map((command, index) => (
                   <button
                     key={command.name}

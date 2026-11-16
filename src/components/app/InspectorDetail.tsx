@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@/lib/diagnostics";
 import { ArrowLeft, LoaderCircle } from "lucide-react";
 import type { InspectorData, InspectorSelection } from "@/lib/omp/inspector-data";
 import { contentText, formatCost, formatTokens, stripAnsi } from "@/lib/omp/format";

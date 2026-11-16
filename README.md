@@ -83,6 +83,43 @@ workspace; restore returns to the previous height. Normal terminal input,
 including `Ctrl+C`, goes directly to the shell. Terminals run with your account's
 permissions, independently of the agent, and require the desktop app.
 
+## Diagnostics
+
+Desktop diagnostics belong to `~/.omp/ompd/dev/` for debug builds and
+`~/.omp/ompd/release/` for release builds, independently of workspace and omp's
+session storage. `logs/` contains background-written JSONL; `profiles/` contains
+opt-in Rust profiling captures. Each launch has its own run ID.
+
+Set `OMPD_LOG` to a tracing filter (default `info`) before starting the app.
+Set `OMPD_PROFILE=1` to enable Puffin capture, then close the app normally to
+finish the capture. Open the resulting `.puffin` file with `puffin_viewer`.
+Use a release build when comparing performance; debug/HMR measurements are
+separate. Forced termination can lose buffered logs and unfinished captures.
+
+Instrumentation lives at startup, the shared frontend IPC bridge, native command
+dispatch and agent transport. Ordinary features use the shared bridge without
+adding diagnostics calls. IPC timing includes native execution and transport;
+Puffin's `ipc_dispatch` scope measures synchronous dispatch only, not completion
+of asynchronous commands. Rust scopes never span `.await`. Puffin does not
+measure React rendering or code inside the omp child.
+
+IPC successes are sampled once per operation per second, with a global limit
+of 20 successful reports and 10 error reports per second, and at most eight
+reports in flight. These records are diagnostic samples, not complete metrics
+for percentile or failure-rate calculations.
+
+Logs rotate at 8 MiB per file and retain 24 files per environment; the background
+queue holds 4096 events and drops excess traffic under load. Only application
+logging targets are persisted. Profiling keeps the newest 120 frames at a
+100 ms collection interval, within a 32 MiB frame-data budget, and retains eight
+capture/partial files. Export is capped at 64 MiB per capture; this is a recent
+activity window, not a recording of the entire application lifetime.
+
+Persistent events contain operation metadata and timings, not command arguments,
+responses, prompt text, raw child stderr or frontend exception messages/stacks.
+The existing in-memory process diagnostics remain available in Settings.
+Treat captures and logs as local diagnostic data; inspect them before sharing.
+
 ## Architecture
 
 ```

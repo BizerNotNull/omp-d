@@ -1,6 +1,7 @@
 mod agent;
 mod auth;
 mod catalog;
+mod diagnostics;
 mod git_status;
 mod rpc_frame;
 mod sessions;
@@ -129,28 +130,40 @@ pub fn run() {
         .manage(AgentState::default())
         .manage(auth::AuthState::default())
         .manage(terminal::TerminalState::default())
-        .invoke_handler(tauri::generate_handler![
-            start_agent,
-            stop_agent,
-            rpc_send,
-            model_catalog,
-            model_roles,
-            native_settings,
-            native_setting_write,
-            auth_start,
-            auth_send,
-            auth_stop,
-            list_sessions,
-            sessions_root,
-            git_status,
-            get_git_changes,
-            get_git_diff,
-            terminal::terminal_create,
-            terminal::terminal_write,
-            terminal::terminal_resize,
-            terminal::terminal_close,
-            initial_folder
-        ])
+        .setup(|app| {
+            let home = app.path().home_dir()?;
+            app.manage(diagnostics::init(&home)?);
+            Ok(())
+        })
+        .invoke_handler({
+            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+                start_agent,
+                stop_agent,
+                rpc_send,
+                model_catalog,
+                model_roles,
+                native_settings,
+                native_setting_write,
+                auth_start,
+                auth_send,
+                auth_stop,
+                list_sessions,
+                sessions_root,
+                git_status,
+                get_git_changes,
+                get_git_diff,
+                terminal::terminal_create,
+                terminal::terminal_write,
+                terminal::terminal_resize,
+                terminal::terminal_close,
+                diagnostics::report_frontend,
+                initial_folder
+            ];
+            move |invoke| {
+                puffin::profile_scope!("ipc_dispatch");
+                handler(invoke)
+            }
+        })
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
@@ -163,6 +176,7 @@ pub fn run() {
                 let auth_state = app_handle.state::<auth::AuthState>();
                 let _ = auth::stop(auth_state.inner(), None).await;
             });
+            app_handle.state::<diagnostics::Diagnostics>().shutdown();
         }
     });
 }

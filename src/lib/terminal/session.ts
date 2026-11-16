@@ -1,4 +1,5 @@
-import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
+import { Channel, isTauri } from "@tauri-apps/api/core";
+import { invoke } from "@/lib/diagnostics";
 
 export type TerminalEvent =
   | { type: "data"; data: number[] }

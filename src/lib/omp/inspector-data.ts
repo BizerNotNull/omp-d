@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@/lib/diagnostics";
 import { useAppStore, type ToolRun } from "./store";
 import { projectInspectorAgents, sessionChangedPaths } from "./inspector";
 import { toolArgSummary } from "./format";

@@ -3,11 +3,15 @@
 ## Unreleased
 
 ### Added
-- Compact Inspector with unified execution/task progress, subscribed subagent activity, workspace detail views and a context/resource footer
-- Read-only Git file summaries and bounded diffs, with recorded-session file filtering and full working-tree scope
+- Centralized, environment-isolated JSONL diagnostics with bounded background logging and automatic IPC timing
+- Frontend error categories for window errors, unhandled rejections and React boundaries
+- Opt-in Puffin captures for native dispatch and RPC processing
 
 ### Changed
-- Replace separate goal, TODO, running-tool and log panels with compact execution rows; move notices, widgets and resource details into workspace inspection views
+- Keep untouched new sessions out of history and resume preferences; reuse an empty composer in the same worktree
+
+### Fixed
+- RPC completion rejections now settle the pending entry instead of an undefined binding
 ## 0.1.0 — 2026-11-06
 
 Initial desktop client for Oh My Pi.

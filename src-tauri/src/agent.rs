@@ -148,11 +148,7 @@ pub async fn start(
         args,
         cwd,
     };
-    eprintln!(
-        "[omp-d] spawning generation {generation}: {} {}",
-        info.program,
-        info.args.join(" ")
-    );
+    tracing::info!(generation, pid, "agent_started");
 
     let child = Arc::new(Mutex::new(child));
     let handle = Arc::new(Mutex::new(AgentHandle {
@@ -214,7 +210,7 @@ async fn stop_handle(handle: Arc<Mutex<AgentHandle>>) -> Result<(), String> {
         Ok(Ok(_)) => {}
         Ok(Err(e)) => return Err(format!("Failed waiting for agent exit: {e}")),
         Err(_) => {
-            eprintln!("[omp-d] graceful stop timed out for pid {}", handle.pid);
+            tracing::warn!(pid = handle.pid, "agent_shutdown_timeout");
             kill_tree(handle.pid);
             let _ = tokio::time::timeout(Duration::from_secs(2), child.kill()).await;
             let _ = child.wait().await;
@@ -228,8 +224,10 @@ pub async fn send(state: &AgentState, generation: u64, command: Value) -> Result
     if !command.is_object() {
         return Err("RPC command must be a JSON object".into());
     }
-    let mut line =
-        serde_json::to_string(&command).map_err(|e| format!("Cannot encode RPC command: {e}"))?;
+    let mut line = {
+        puffin::profile_scope!("rpc_encode");
+        serde_json::to_string(&command).map_err(|e| format!("Cannot encode RPC command: {e}"))?
+    };
     if line.len() > crate::rpc_frame::MAX_REASSEMBLED_BYTES {
         return Err("RPC command exceeds the transport limit".into());
     }
@@ -256,12 +254,14 @@ fn spawn_stdout_reader(app: AppHandle, stdout: tokio::process::ChildStdout, gene
         loop {
             match lines.next_line().await {
                 Ok(Some(line)) => {
+                    puffin::profile_scope!("rpc_decode_dispatch");
                     if line.trim().is_empty() {
                         continue;
                     }
                     let parsed: Value = match serde_json::from_str(&line) {
                         Ok(value) => value,
                         Err(error) => {
+                            tracing::warn!(generation, bytes = line.len(), "rpc_parse_error");
                             let _ = app.emit(
                                 "omp://protocol",
                                 serde_json::json!({
@@ -283,6 +283,7 @@ fn spawn_stdout_reader(app: AppHandle, stdout: tokio::process::ChildStdout, gene
                         }
                         Ok(None) => {}
                         Err(message) => {
+                            tracing::warn!(generation, "rpc_protocol_error");
                             let _ = app.emit(
                                 "omp://protocol",
                                 serde_json::json!({
@@ -295,7 +296,7 @@ fn spawn_stdout_reader(app: AppHandle, stdout: tokio::process::ChildStdout, gene
                     }
                 }
                 Ok(None) => {
-                    eprintln!("[omp-d] stdout EOF for generation {generation}");
+                    tracing::info!(generation, "agent_stdout_eof");
                     let _ = app.emit(
                         "omp://process",
                         serde_json::json!({ "kind": "eof", "generation": generation }),
@@ -303,7 +304,7 @@ fn spawn_stdout_reader(app: AppHandle, stdout: tokio::process::ChildStdout, gene
                     break;
                 }
                 Err(error) => {
-                    eprintln!("[omp-d] stdout read failed for generation {generation}: {error}");
+                    tracing::error!(generation, error_kind = ?error.kind(), "agent_stdout_read_failed");
                     let _ = app.emit(
                         "omp://process",
                         serde_json::json!({
@@ -329,7 +330,7 @@ fn spawn_exit_monitor(app: AppHandle, child: Arc<Mutex<Child>>, generation: u64)
             match guard.try_wait() {
                 Ok(Some(status)) => {
                     let code = status.code();
-                    eprintln!("[omp-d] generation {generation} exited with {code:?}");
+                    tracing::info!(generation, exit_code = code, "agent_exited");
                     let _ = app.emit(
                         "omp://process",
                         serde_json::json!({ "kind": "exit", "generation": generation, "exitCode": code }),
@@ -338,7 +339,7 @@ fn spawn_exit_monitor(app: AppHandle, child: Arc<Mutex<Child>>, generation: u64)
                 }
                 Ok(None) => {}
                 Err(error) => {
-                    eprintln!("[omp-d] exit monitor failed for generation {generation}: {error}");
+                    tracing::error!(generation, error_kind = ?error.kind(), "agent_exit_monitor_failed");
                     return;
                 }
             }
@@ -350,8 +351,8 @@ fn spawn_stderr_reader(app: AppHandle, stderr: tokio::process::ChildStderr, gene
     tauri::async_runtime::spawn(async move {
         let mut lines = BufReader::new(stderr).lines();
         while let Ok(Some(line)) = lines.next_line().await {
+            tracing::debug!(generation, bytes = line.len(), "agent_stderr_received");
             let line = truncate(&line, 4000);
-            eprintln!("[omp stderr {generation}] {line}");
             let _ = app.emit(
                 "omp://stderr",
                 serde_json::json!({ "generation": generation, "line": line }),

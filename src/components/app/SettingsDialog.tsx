@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Copy, FolderCog, LoaderCircle, RotateCcw, Save, Square } from "lucide-react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@/lib/diagnostics";
 import { openPath } from "@tauri-apps/plugin-opener";
 import {
   Dialog,

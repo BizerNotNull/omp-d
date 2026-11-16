@@ -5,7 +5,7 @@
  * correlation, protocol negotiation and the ready/process lifecycle.
  */
 
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, reportRpcCompletion } from "@/lib/diagnostics";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   ExtensionUIResponse,
@@ -281,8 +281,10 @@ export class OmpClient {
     command: { type: string; id?: string } & Record<string, unknown>,
     options?: { timeoutMs?: number },
   ): Promise<RpcResponse<T>> {
+    const started = performance.now();
     const generation = this.generation;
     if (generation === undefined || this.activeSeq !== this.startSeq) {
+      reportRpcCompletion(started, false);
       return Promise.reject(new Error("Agent is not running"));
     }
     const id = command.id ?? `ui-${++this.counter}`;
@@ -291,13 +293,19 @@ export class OmpClient {
     const timer = options?.timeoutMs
       ? window.setTimeout(() => {
           this.pending.delete(id);
-          reject(new RpcFailure(`Command "${command.type}" timed out.`, command.type, "timeout"));
+          entry.reject(new RpcFailure(`Command "${command.type}" timed out.`, command.type, "timeout"));
         }, options.timeoutMs)
       : undefined;
     const entry: Pending = {
       command: command.type,
-      resolve: (response) => resolve(response as RpcResponse<T>),
-      reject,
+      resolve: (response) => {
+        reportRpcCompletion(started, true);
+        resolve(response as RpcResponse<T>);
+      },
+      reject: (error) => {
+        reportRpcCompletion(started, false);
+        reject(error);
+      },
       timer,
     };
     this.pending.set(id, entry);
@@ -306,7 +314,7 @@ export class OmpClient {
       const pending = this.pending.get(id);
       window.clearTimeout(pending?.timer);
       this.pending.delete(id);
-      reject(new Error(String(error)));
+      entry.reject(new Error(String(error)));
     });
     return promise;
   }

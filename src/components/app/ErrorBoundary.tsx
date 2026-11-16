@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { reportFrontendError } from "@/lib/diagnostics";
 
 interface ErrorBoundaryState {
   error: Error | null;
@@ -14,6 +15,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBound
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
+    reportFrontendError("react_boundary");
     console.error("omp-d renderer error", error, info.componentStack);
   }
 

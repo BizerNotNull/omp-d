@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@/lib/diagnostics";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { create, type StoreApi, type UseBoundStore } from "zustand";
@@ -1381,8 +1381,17 @@ useSessionNavigation.subscribe(({ repositoryCwd, sessionListing, sessionsLoading
   useAppStore.setState({ sessionListing, sessionsLoading });
 });
 
+/** A runtime exists as soon as omp starts; conversation is what makes it a session. */
+function hasSessionActivity(state: AppState): boolean {
+  return Boolean(state.messages.length || state.pending.length || state.busy
+    || state.session?.messageCount || state.session?.hasPendingAsyncWork
+    || state.session?.queuedMessageCount || state.session?.sessionName
+    || state.session?.sessionTitle || state.session?.goal);
+}
+
 function publishRuntimes() {
-  const openSessions = [...runtimes].map(([id, { store, path }]): OpenSession => {
+  const openSessions = [...runtimes].filter(([, { store, path }]) =>
+    path || hasSessionActivity(store.getState())).map(([id, { store, path }]): OpenSession => {
     const state = store.getState();
     return {
       id,
@@ -1402,7 +1411,8 @@ function publishRuntimes() {
     sessionListing: navigation.sessionListing, sessionsLoading: navigation.sessionsLoading }, true);
   const active = activeRuntime.getState();
   if (active.cwd) {
-    const path = active.session?.sessionFile ?? runtimes.get(active.activeRuntimeId)?.path;
+    const path = (hasSessionActivity(active) ? active.session?.sessionFile : undefined)
+      ?? runtimes.get(active.activeRuntimeId)?.path;
     rememberActiveSession(active.cwd, path);
     localStorage.setItem(LAST_CWD_KEY, active.cwd);
     const project = useSessionNavigation.getState().repositoryCwd;
@@ -1426,6 +1436,17 @@ function selectRuntime(id: number) {
 }
 
 async function openRuntime(cwd: string, path?: string) {
+  if (!path) {
+    // An untouched composer is reused instead of spawning a second untracked runtime.
+    const empty = [...runtimes.values()].find((entry) => !entry.path
+      && entry.store.getState().status === "ready"
+      && sessionPathKey(entry.store.getState().cwd) === sessionPathKey(cwd)
+      && !hasSessionActivity(entry.store.getState()));
+    if (empty) {
+      selectRuntime(empty.store.getState().activeRuntimeId);
+      return empty.store;
+    }
+  }
   if (!path && !activeRuntime.getState().cwd && activeRuntime.getState().status === "idle") {
     const store = activeRuntime;
     await store.getState().connect(cwd);

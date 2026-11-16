@@ -311,6 +311,25 @@ refreshes clear old values.
 | `open_url`                   | system opener                                            |
 | `cancel`                     | removes the matching dialog                              |
 
+## Diagnostics boundary
+
+`diagnostics.rs` owns subscriber initialization, bounded background output,
+profiling capture and shutdown. The managed guard survives child restarts and
+flushes after children stop on application exit. It uses the user's home
+directory, not the workspace or omp's session-root override.
+
+Frontend native calls import `invoke` from `@/lib/diagnostics`; this preserves
+the native API and rejection values while sampling operation-only timing
+reports. Global error handlers and the React error boundary report categories
+without exception content. `OmpClient` records correlated RPC completion with a
+fixed label, without serializing request IDs, command types or response bodies.
+Telemetry uses the raw bridge, is bounded and best effort, and cannot recurse.
+
+New commands inherit frontend timing and the shared native dispatch scope.
+Feature-specific Rust scopes are optional and reserved for hotspot investigation;
+no feature is required to depend on Puffin. Existing live stderr diagnostics are
+not a disk logging sink. See README for capture controls and storage.
+
 ## Security boundary
 
 The renderer is untrusted with model output: Markdown is rendered through

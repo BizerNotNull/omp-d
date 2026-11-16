@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/omp/store";
 import type { AvailableCommand, ImageContent } from "@/lib/omp/types";
 import { ComposerStatus } from "./ComposerStatus";
+import { AgentRequestCard } from "./AgentRequestCard";
 
 function readImage(file: File): Promise<ImageContent | undefined> {
   return new Promise((resolve) => {
@@ -261,6 +262,8 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
             ))}
           </div>
         )}
+
+        <AgentRequestCard />
 
         <div className="relative">
           {suggestions.length > 0 && (

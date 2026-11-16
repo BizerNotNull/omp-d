@@ -1,26 +1,25 @@
 import { useState } from "react";
 import { HelpCircle } from "lucide-react";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { useAppStore, type DialogRequest } from "@/lib/omp/store";
-export function ExtensionDialogs() {
+export function AgentRequestCard() {
   const dialogs = useAppStore((state) => state.dialogs);
   const dialog = dialogs[0];
   if (!dialog) return null;
-  return <DialogHost key={dialog.id} dialog={dialog} />;
+  return (
+    <section aria-label="Agent request" className="mb-3 flex max-h-[45vh] min-h-0 flex-col overflow-hidden rounded-2xl border border-ring/30 bg-card shadow-sm">
+      <div className="scroll-thin min-h-0 overflow-y-auto p-4">
+        <RequestBody key={dialog.id} dialog={dialog} />
+      </div>
+    </section>
+  );
 }
 
-function DialogHost({ dialog }: { dialog: DialogRequest }) {
+function RequestBody({ dialog }: { dialog: DialogRequest }) {
   const cancelDialog = useAppStore((state) => state.cancelDialog);
   const answerDialog = useAppStore((state) => state.answerDialog);
 
@@ -28,31 +27,32 @@ function DialogHost({ dialog }: { dialog: DialogRequest }) {
     return <AskDialog dialog={dialog} onAnswer={answerDialog} onCancel={cancelDialog} />;
   }
 
-  const title = dialog.method === "confirm" ? dialog.title : dialog.title;
+  const title = dialog.title;
   return (
-    <Dialog open onOpenChange={(open) => (!open ? void cancelDialog(dialog.id) : undefined)}>
-      <DialogContent className="sm:max-w-lg" showCloseButton={false}>
-        <DialogHeader>
-          <DialogTitle>{title || "The agent needs input"}</DialogTitle>
-          {dialog.method === "confirm" && <DialogDescription>{dialog.message}</DialogDescription>}
-          {dialog.method === "select" && (
-            <DialogDescription>Choose one option to continue the agent's work.</DialogDescription>
-          )}
-          {dialog.method === "input" && (
-            <DialogDescription>{title ? "Enter a value below." : "The agent is waiting for a value."}</DialogDescription>
-          )}
-          {dialog.method === "editor" && (
-            <DialogDescription>Review or edit the text, then submit it.</DialogDescription>
-          )}
-        </DialogHeader>
+    <div className="space-y-3">
+      <header className="space-y-1">
+        <h2 className="flex items-center gap-2 text-sm font-medium">
+          <HelpCircle className="size-4 shrink-0 text-muted-foreground" />
+          {title || "The agent needs input"}
+        </h2>
+        <p className="text-xs whitespace-pre-wrap text-muted-foreground">
+          {dialog.method === "confirm" && dialog.message}
+          {dialog.method === "select" && "Choose one option to continue the agent's work."}
+          {dialog.method === "input" && (title ? "Enter a value below." : "The agent is waiting for a value.")}
+          {dialog.method === "editor" && "Review or edit the text, then submit it."}
+        </p>
+      </header>
         <DialogBody
           dialog={dialog}
           onCancel={() => void cancelDialog(dialog.id)}
           onSubmit={(response) => void answerDialog(dialog.id, response)}
         />
-      </DialogContent>
-    </Dialog>
+    </div>
   );
+}
+
+function RequestFooter({ children }: { children: ReactNode }) {
+  return <div className="flex flex-wrap justify-end gap-2">{children}</div>;
 }
 
 function DialogBody({
@@ -70,12 +70,12 @@ function DialogBody({
 
   if (dialog.method === "confirm") {
     return (
-      <DialogFooter>
+      <RequestFooter>
         <Button variant="outline" onClick={onCancel}>
           Cancel
         </Button>
         <Button onClick={() => onSubmit({ confirmed: true })}>Confirm</Button>
-      </DialogFooter>
+      </RequestFooter>
     );
   }
 
@@ -97,11 +97,11 @@ function DialogBody({
             </button>
           ))}
         </div>
-        <DialogFooter>
+        <RequestFooter>
           <Button variant="outline" onClick={onCancel}>
             Cancel
           </Button>
-        </DialogFooter>
+        </RequestFooter>
       </div>
     );
   }
@@ -122,12 +122,12 @@ function DialogBody({
           }}
           autoFocus
         />
-        <DialogFooter>
+        <RequestFooter>
           <Button variant="outline" onClick={onCancel}>
             Cancel
           </Button>
           <Button onClick={() => onSubmit({ value })}>{dialog.secret ? "Submit" : "OK"}</Button>
-        </DialogFooter>
+        </RequestFooter>
       </div>
     );
   }
@@ -141,12 +141,12 @@ function DialogBody({
         className="max-h-80 font-mono text-[12px]"
         autoFocus
       />
-      <DialogFooter>
+      <RequestFooter>
         <Button variant="outline" onClick={onCancel}>
           Cancel
         </Button>
         <Button onClick={() => onSubmit({ value })}>Submit</Button>
-      </DialogFooter>
+      </RequestFooter>
     </div>
   );
 }
@@ -180,7 +180,7 @@ function AskDialog({
           : [...previous.selected, label];
         return { ...current, [questionId]: { ...previous, selected } };
       }
-      return { ...current, [questionId]: { ...previous, selected: [label] } };
+      return { ...current, [questionId]: { selected: [label], custom: "" } };
     });
   }
 
@@ -199,17 +199,16 @@ function AskDialog({
   }
 
   return (
-    <Dialog open onOpenChange={(open) => (!open ? void onCancel(dialog.id) : undefined)}>
-      <DialogContent className="sm:max-w-2xl" showCloseButton={false}>
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <HelpCircle className="size-4 text-muted-foreground" />
-            A question from the agent
-          </DialogTitle>
-          <DialogDescription>Answers are returned to the running tool. Free text is always accepted.</DialogDescription>
-        </DialogHeader>
+    <div className="space-y-3">
+      <header className="space-y-1">
+        <h2 className="flex items-center gap-2 text-sm font-medium">
+          <HelpCircle className="size-4 shrink-0 text-muted-foreground" />
+          A question from the agent
+        </h2>
+        <p className="text-xs text-muted-foreground">Answers are returned to the running tool. Free text is always accepted.</p>
+      </header>
 
-        <div className="scroll-thin max-h-[60vh] space-y-4 overflow-y-auto pr-1">
+        <div className="space-y-4">
           {dialog.questions.map((question) => {
             const state = answers[question.id] ?? { selected: [], custom: "" };
             return (
@@ -227,6 +226,7 @@ function AskDialog({
                       <button
                         key={`${option.label}-${index}`}
                         type="button"
+                        aria-pressed={checked}
                         onClick={() => toggle(question.id, option.label, Boolean(question.multi))}
                         className={cn(
                           "flex items-start gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors",
@@ -268,12 +268,16 @@ function AskDialog({
                 </div>
                 <div className="mt-2">
                   <Input
+                    aria-label={`Your answer: ${question.question}`}
                     value={state.custom}
                     placeholder="Other — type your own answer"
                     onChange={(event) =>
                       setAnswers((current) => ({
                         ...current,
-                        [question.id]: { ...state, custom: event.target.value },
+                        [question.id]: {
+                          selected: !question.multi && event.target.value.trim() ? [] : state.selected,
+                          custom: event.target.value,
+                        },
                       }))
                     }
                     className="h-8 text-[11px]"
@@ -284,13 +288,12 @@ function AskDialog({
           })}
         </div>
 
-        <DialogFooter>
+        <RequestFooter>
           <Button variant="outline" onClick={() => void onCancel(dialog.id)}>
             Cancel
           </Button>
           <Button onClick={submit}>Send answers</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </RequestFooter>
+    </div>
   );
 }

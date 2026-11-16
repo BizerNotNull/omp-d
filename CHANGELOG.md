@@ -3,7 +3,7 @@
 ## Unreleased
 
 ### Fixed
-- Slash-command autocomplete now shows every matching command, including all runtime skills, and scrolls to keyboard-selected entries
+- Agent questions, confirmations, selections, and text editors now appear in a scrollable card above the composer instead of modal dialogs
 ## 0.1.0 — 2026-11-06
 
 Initial desktop client for Oh My Pi.

@@ -8,7 +8,6 @@ import { RightPanel } from "./RightPanel";
 import { StatusBar } from "./StatusBar";
 import { Welcome } from "./Welcome";
 import { Toasts } from "./Toasts";
-import { ExtensionDialogs } from "./ExtensionDialogs";
 import { ModelPicker } from "./ModelPicker";
 import { ProviderLogin } from "./ProviderLogin";
 import { SettingsDialog } from "./SettingsDialog";
@@ -112,7 +111,6 @@ export function AppShell() {
           {panelOpen && !modelsOpen && <RightPanel data={inspector} onInspect={inspect} onClose={() => setPanelOpen(false)} />}
         </div>
         <StatusBar terminalOpen={terminalVisible} onToggleTerminal={toggleTerminal} />
-        <ExtensionDialogs />
         <Toasts />
         <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
       </div>

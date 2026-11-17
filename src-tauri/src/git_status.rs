@@ -5,16 +5,17 @@
 //! and unstaged edits that cancel contribute nothing. Untracked and binary file
 //! contents contribute no lines; renames use Git's configured rename detection.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Output, Stdio};
-use std::time::Duration;
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
-#[derive(Debug, Default, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct GitStatus {
     pub branch: String,
@@ -62,47 +63,51 @@ fn process_error(output: &Output) -> String {
     format!("Git exited unsuccessfully ({}): {}", output.status, String::from_utf8_lossy(&output.stderr).trim())
 }
 
-pub async fn status(cwd: String) -> Result<Option<GitStatus>, String> {
-    tokio::time::timeout(Duration::from_secs(5), query(Path::new(&cwd)))
-        .await
-        .map_err(|_| "Git status timed out after 5 seconds".to_string())?
+const SNAPSHOT_TTL: Duration = Duration::from_secs(1);
+type SnapshotSlot = Arc<tokio::sync::Mutex<Option<(Instant, Option<Arc<Snapshot>>)>>>;
+
+struct Snapshot {
+    root: PathBuf,
+    base: String,
+    status: GitStatus,
+    files: Vec<GitChangedFile>,
+    changes: tokio::sync::OnceCell<GitChanges>,
 }
 
-async fn query(cwd: &Path) -> Result<Option<GitStatus>, String> {
-    let output = git(cwd, &["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"]).await?;
-    if !output.status.success() {
-        // A missing executable, inaccessible cwd, unsafe repository, corrupt index,
-        // or any other process failure is an error, not an empty workspace status.
-        if output.status.code() == Some(128)
-            && output.stderr.starts_with(b"fatal: not a git repository (or any ")
-        {
-            return Ok(None);
+// Share both in-flight and recently completed scans across sessions and UI panels.
+// Do not cache failures or hold a global lock across filesystem/process work.
+async fn snapshot(cwd: &Path) -> Result<Option<Arc<Snapshot>>, String> {
+    static CACHE: LazyLock<Mutex<VecDeque<(PathBuf, SnapshotSlot)>>> = LazyLock::new(Mutex::default);
+    let slot = {
+        let mut cache = CACHE.lock().unwrap();
+        if let Some(index) = cache.iter().position(|(path, _)| path == cwd) {
+            let entry = cache.remove(index).unwrap();
+            let slot = entry.1.clone();
+            cache.push_back(entry);
+            slot
+        } else {
+            let slot = Arc::new(tokio::sync::Mutex::new(None));
+            if cache.len() == 32 { cache.pop_front(); }
+            cache.push_back((cwd.to_path_buf(), slot.clone()));
+            slot
         }
-        return Err(process_error(&output));
-    }
-    let (mut status, unborn) = parse_status(&output.stdout)?;
-    let empty_tree;
-    let base = if unborn {
-        // Compute, but never write, the empty tree ID; works for SHA-1 and SHA-256.
-        let output = git(cwd, &["hash-object", "-t", "tree", "--stdin"]).await?;
-        if !output.status.success() {
-            return Err(process_error(&output));
-        }
-        empty_tree = String::from_utf8(output.stdout).map_err(|_| "Git returned an invalid empty tree ID".to_string())?;
-        let id = empty_tree.trim();
-        if id.is_empty() || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err("Git returned an invalid empty tree ID".into());
-        }
-        id
-    } else {
-        "HEAD"
     };
-    let output = git(cwd, &["diff", "--numstat", "-z", "--no-relative", "--no-ext-diff", "--no-textconv", base, "--"]).await?;
-    if !output.status.success() {
-        return Err(process_error(&output));
+    let mut cached = slot.lock().await;
+    if let Some((at, value)) = &*cached
+        && at.elapsed() < SNAPSHOT_TTL
+    {
+        return Ok(value.clone());
     }
-    (status.additions, status.deletions) = parse_numstat(&output.stdout)?;
-    Ok(Some(status))
+    let value = query(cwd).await?.map(Arc::new);
+    *cached = Some((Instant::now(), value.clone()));
+    Ok(value)
+}
+
+pub async fn status(cwd: String) -> Result<Option<GitStatus>, String> {
+    tokio::time::timeout(Duration::from_secs(5), snapshot(Path::new(&cwd)))
+        .await
+        .map_err(|_| "Git status timed out after 5 seconds".to_string())?
+        .map(|value| value.map(|value| value.status.clone()))
 }
 
 fn parse_status(bytes: &[u8]) -> Result<(GitStatus, bool), String> {
@@ -190,13 +195,13 @@ fn parse_numstat(bytes: &[u8]) -> Result<(u64, u64), String> {
 
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct GitChanges {
     pub root: String,
     pub files: Vec<GitChangedFile>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct GitChangedFile {
     pub path: String,
     pub status: String,
@@ -209,18 +214,11 @@ pub struct GitChangedFile {
 /// Net tracked HEAD-to-worktree changes plus individual untracked files.
 /// Unknown/binary/oversize line totals are null; conflicts always have null totals.
 pub async fn changes(cwd: String) -> Result<Option<GitChanges>, String> {
-    tokio::time::timeout(Duration::from_secs(10), query_changes(Path::new(&cwd), true))
-        .await.map_err(|_| "Git changes timed out after 10 seconds".to_string())?
-        .map(|value| value.map(|(root, _, files)| {
-            let root = root.to_string_lossy().into_owned();
-            #[cfg(windows)]
-            let root = if let Some(path) = root.strip_prefix(r"\\?\UNC\") {
-                format!("//{}", path.replace('\\', "/"))
-            } else {
-                root.strip_prefix(r"\\?\").unwrap_or(&root).replace('\\', "/")
-            };
-            GitChanges { root, files }
-        }))
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let Some(snapshot) = snapshot(Path::new(&cwd)).await? else { return Ok(None) };
+        let changes = snapshot.changes.get_or_try_init(|| enrich_changes(&snapshot)).await?;
+        Ok(Some(changes.clone()))
+    }).await.map_err(|_| "Git changes timed out after 10 seconds".to_string())?
 }
 
 /// Returns Git's patch, including its explicit binary marker, for an exact listed
@@ -228,9 +226,10 @@ pub async fn changes(cwd: String) -> Result<Option<GitChanges>, String> {
 pub async fn diff(cwd: String, path: String) -> Result<String, String> {
     tokio::time::timeout(Duration::from_secs(10), async {
         validate_path(&path)?;
-        let (root, base, files) = query_changes(Path::new(&cwd), false).await?
-            .ok_or("Not a Git repository")?;
-        let file = files.into_iter().find(|file| file.path == path)
+        let snapshot = snapshot(Path::new(&cwd)).await?.ok_or("Not a Git repository")?;
+        let root = &snapshot.root;
+        let base = &snapshot.base;
+        let file = snapshot.files.iter().find(|file| file.path == path)
             .ok_or("The requested path is not in the changed-file list")?;
         check_file(&root, &path)?;
         if let Some(source) = &file.source {
@@ -313,8 +312,11 @@ async fn untracked_git(root: &Path, path: &str, numstat: bool) -> Result<Output,
     Ok(output)
 }
 
-async fn query_changes(cwd: &Path, counts: bool) -> Result<Option<(PathBuf, String, Vec<GitChangedFile>)>, String> {
-    let output = git(cwd, &["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"]).await?;
+async fn query(cwd: &Path) -> Result<Option<Snapshot>, String> {
+    let (output, root_output) = tokio::try_join!(
+        git(cwd, &["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"]),
+        git(cwd, &["rev-parse", "--show-toplevel"]),
+    )?;
     if !output.status.success() {
         if output.status.code() == Some(128)
             && output.stderr.starts_with(b"fatal: not a git repository (or any ")
@@ -323,9 +325,9 @@ async fn query_changes(cwd: &Path, counts: bool) -> Result<Option<(PathBuf, Stri
         }
         return Err(process_error(&output));
     }
-    let (_, unborn) = parse_status(&output.stdout)?;
+    let (mut status, unborn) = parse_status(&output.stdout)?;
     let status_bytes = output.stdout;
-    let output = git(cwd, &["rev-parse", "--show-toplevel"]).await?;
+    let output = root_output;
     if !output.status.success() {
         return Err(process_error(&output));
     }
@@ -347,49 +349,29 @@ async fn query_changes(cwd: &Path, counts: bool) -> Result<Option<(PathBuf, Stri
     } else {
         "HEAD".to_string()
     };
-    let output = git(&root, &["diff", "--name-status", "-z", "--no-relative",
+    // --raw and --numstat share the same tree walk and rename detection.
+    let output = git(&root, &["diff", "--raw", "--numstat", "-z", "--no-relative",
         "--no-ext-diff", "--no-textconv", "--find-renames", &base, "--"]).await?;
     if !output.status.success() {
         return Err(process_error(&output));
     }
-    let mut files = parse_changed_paths(&output.stdout)?;
-    if counts {
-        let output = git(&root, &["diff", "--numstat", "-z", "--no-relative",
-            "--no-ext-diff", "--no-textconv", "--find-renames", &base, "--"]).await?;
-        if !output.status.success() {
-            return Err(process_error(&output));
-        }
-        apply_file_counts(&mut files, &output.stdout)?;
-    }
-    // Status paths may be relative to cwd; force root-relative status for nested workspaces.
-    let output = if cwd.canonicalize().map_err(|error| error.to_string())? == root {
-        status_bytes
-    } else {
-        let output = git(&root, &["status", "--porcelain=v2", "-z", "--untracked-files=all"]).await?;
-        if !output.status.success() {
-            return Err(process_error(&output));
-        }
-        output.stdout
-    };
+    let mut files = parse_tracked_changes(&output.stdout)?;
+    (status.additions, status.deletions) = files.values().try_fold((0_u64, 0_u64), |(added, deleted), file| {
+        Ok::<_, String>((
+            added.checked_add(file.additions.unwrap_or(0)).ok_or("Git additions overflowed")?,
+            deleted.checked_add(file.deletions.unwrap_or(0)).ok_or("Git deletions overflowed")?,
+        ))
+    })?;
+    // Porcelain v2 paths are always repository-root relative, even from a nested cwd.
+    let output = status_bytes;
     let mut records = output.split(|byte| *byte == 0);
     while let Some(record) = records.next() {
         if record.starts_with(b"2 ") {
             records.next();
         } else if let Some(path) = record.strip_prefix(b"? ") {
             let path = git_path(path)?;
-            let mut file = GitChangedFile { path: path.clone(), status: "untracked".into(),
+            let file = GitChangedFile { path: path.clone(), status: "untracked".into(),
                 additions: None, deletions: None, source: None };
-            if counts && matches!(check_file(&root, &path), Ok(Some(_))) {
-                let output = untracked_git(&root, &path, true).await?;
-                // --no-index emits a NUL rename-style pair from /dev/null.
-                // This command already targets the validated file; its source
-                // is not a repository path to feed through apply_file_counts.
-                if !output.stdout.starts_with(b"-\t-\t") {
-                    let (additions, deletions) = parse_numstat(&output.stdout)?;
-                    file.additions = Some(additions);
-                    file.deletions = Some(deletions);
-                }
-            }
             files.insert(path, file);
         } else if record.starts_with(b"u ") {
             let path = record.splitn(11, |byte| *byte == b' ').nth(10)
@@ -403,30 +385,75 @@ async fn query_changes(cwd: &Path, counts: bool) -> Result<Option<(PathBuf, Stri
             file.deletions = None;
         }
     }
-    Ok(Some((root, base, files.into_values().collect())))
+    Ok(Some(Snapshot { root, base, status, files: files.into_values().collect(),
+        changes: tokio::sync::OnceCell::new() }))
 }
 
-fn parse_changed_paths(bytes: &[u8]) -> Result<BTreeMap<String, GitChangedFile>, String> {
-    let mut files = BTreeMap::new();
-    let mut records = bytes.split(|byte| *byte == 0).peekable();
-    while let Some(status) = records.next() {
-        if status.is_empty() && records.peek().is_none() {
-            break;
+async fn enrich_changes(snapshot: &Snapshot) -> Result<GitChanges, String> {
+    let mut files = snapshot.files.clone();
+    let mut pending = snapshot.files.iter().enumerate().filter(|(_, file)| file.status == "untracked");
+    let mut tasks = tokio::task::JoinSet::new();
+    loop {
+        while tasks.len() < 4 {
+            let Some((index, file)) = pending.next() else { break };
+            let root = snapshot.root.clone();
+            let path = file.path.clone();
+            tasks.spawn(async move {
+                if !matches!(check_file(&root, &path), Ok(Some(_))) {
+                    return Ok::<_, String>((index, None));
+                }
+                let output = untracked_git(&root, &path, true).await?;
+                let counts = if output.stdout.starts_with(b"-\t-\t") {
+                    None
+                } else {
+                    Some(parse_numstat(&output.stdout)?)
+                };
+                Ok((index, counts))
+            });
         }
+        let Some(result) = tasks.join_next().await else { break };
+        let (index, counts) = result.map_err(|error| error.to_string())??;
+        if let Some((added, deleted)) = counts {
+            files[index].additions = Some(added);
+            files[index].deletions = Some(deleted);
+        }
+    }
+    let root = snapshot.root.to_string_lossy().into_owned();
+    #[cfg(windows)]
+    let root = if let Some(path) = root.strip_prefix(r"\\?\UNC\") {
+        format!("//{}", path.replace('\\', "/"))
+    } else {
+        root.strip_prefix(r"\\?\").unwrap_or(&root).replace('\\', "/")
+    };
+    Ok(GitChanges { root, files })
+}
+
+fn parse_tracked_changes(mut bytes: &[u8]) -> Result<BTreeMap<String, GitChangedFile>, String> {
+    fn record<'a>(bytes: &mut &'a [u8]) -> Result<&'a [u8], String> {
+        let end = bytes.iter().position(|byte| *byte == 0).ok_or("Incomplete Git diff record")?;
+        let value = &bytes[..end];
+        *bytes = &bytes[end + 1..];
+        Ok(value)
+    }
+    let mut files = BTreeMap::new();
+    while bytes.starts_with(b":") {
+        let header = record(&mut bytes)?;
+        let status = header.rsplit(|byte| *byte == b' ').next().ok_or("Missing Git change status")?;
         let kind = match status.first() {
             Some(b'A') => "added", Some(b'D') => "deleted", Some(b'M') => "modified",
             Some(b'R') => "renamed", Some(b'C') => "copied", Some(b'T') => "typechanged",
             Some(b'U') => "conflicted", _ => return Err("Invalid Git change status".into()),
         };
-        let first = git_path(records.next().ok_or("Missing Git change path")?)?;
+        let first = git_path(record(&mut bytes)?)?;
         let (path, source) = if kind == "renamed" || kind == "copied" {
-            (git_path(records.next().ok_or("Missing Git rename destination")?)?, Some(first))
+            (git_path(record(&mut bytes)?)?, Some(first))
         } else {
             (first, None)
         };
         files.insert(path.clone(), GitChangedFile { path, status: kind.into(),
             additions: None, deletions: None, source });
     }
+    apply_file_counts(&mut files, bytes)?;
     Ok(files)
 }
 
@@ -503,14 +530,64 @@ mod tests {
 
     #[test]
     fn changed_paths_preserve_rename_names_and_control_characters() {
-        let mut files = parse_changed_paths(b"R100\0old\tname\0new\nname\0M\0glob[ab].txt\0").unwrap();
+        let files = parse_tracked_changes(b":100644 100644 abc def R100\0old\tname\0new\nname\0:100644 100644 abc def M\0glob[ab].txt\02\t3\t\0old\tname\0new\nname\0-\t-\tglob[ab].txt\0").unwrap();
         assert_eq!(files["new\nname"].source.as_deref(), Some("old\tname"));
         assert_eq!(files["new\nname"].status, "renamed");
-        apply_file_counts(&mut files, b"2\t3\t\0old\tname\0new\nname\0-\t-\tglob[ab].txt\0").unwrap();
         assert_eq!(files["new\nname"].additions, Some(2));
         assert_eq!(files["new\nname"].deletions, Some(3));
         assert_eq!(files["glob[ab].txt"].additions, None);
-        assert!(parse_changed_paths(b"R100\0old\0").is_err());
+        assert!(parse_tracked_changes(b":100644 100644 abc def R100\0old\0").is_err());
+    }
+
+    #[tokio::test]
+    async fn shared_snapshot_preserves_net_changes_and_refreshes_after_expiry() {
+        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("ompd-git-cache-{}-{unique}", std::process::id()));
+        std::fs::create_dir_all(root.join("nested")).unwrap();
+        let result = async {
+            assert!(git(&root, &["init", "--quiet"]).await.unwrap().status.success());
+            for (path, text) in [("cancel.txt", "old\n"), ("old.txt", "rename\n"), ("edited.txt", "a\n")] {
+                std::fs::write(root.join(path), text).unwrap();
+            }
+            assert!(git(&root, &["add", "."]).await.unwrap().status.success());
+            assert!(git(&root, &["-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "seed"]).await.unwrap().status.success());
+            std::fs::rename(root.join("old.txt"), root.join("new.txt")).unwrap();
+            assert!(git(&root, &["add", "-A"]).await.unwrap().status.success());
+            std::fs::write(root.join("cancel.txt"), "intermediate\n").unwrap();
+            assert!(git(&root, &["add", "cancel.txt"]).await.unwrap().status.success());
+            std::fs::write(root.join("cancel.txt"), "old\n").unwrap();
+            std::fs::write(root.join("edited.txt"), "a\nb\n").unwrap();
+            for index in 0..12 {
+                std::fs::write(root.join(format!("nested/{index}.txt")), "new\n").unwrap();
+            }
+            let (first, second) = tokio::join!(snapshot(&root), snapshot(&root));
+            let first = first.unwrap().unwrap();
+            assert!(Arc::ptr_eq(&first, &second.unwrap().unwrap()));
+            assert_eq!((first.status.staged, first.status.unstaged, first.status.untracked), (2, 2, 12));
+            assert_eq!((first.status.additions, first.status.deletions), (1, 0));
+            assert!(!first.files.iter().any(|file| file.path == "cancel.txt"));
+            let renamed = first.files.iter().find(|file| file.path == "new.txt").unwrap();
+            assert_eq!(renamed.source.as_deref(), Some("old.txt"));
+            assert_eq!(renamed.status, "renamed");
+            let cwd = root.to_string_lossy().into_owned();
+            let (left, right) = tokio::join!(changes(cwd.clone()), changes(cwd.clone()));
+            for changes in [left.unwrap().unwrap(), right.unwrap().unwrap()] {
+                for index in 0..12 {
+                    let path = format!("nested/{index}.txt");
+                    let file = changes.files.iter().find(|file| file.path == path).unwrap();
+                    assert_eq!((file.additions, file.deletions), (Some(1), Some(0)));
+                }
+            }
+            assert!(diff(cwd, "new.txt".into()).await.unwrap().contains("rename from old.txt"));
+            std::fs::write(root.join("edited.txt"), "a\nb\nc\n").unwrap();
+            tokio::time::sleep(SNAPSHOT_TTL + Duration::from_millis(10)).await;
+            let refreshed = snapshot(&root).await.unwrap().unwrap();
+            assert!(!Arc::ptr_eq(&first, &refreshed));
+            assert_eq!((refreshed.status.additions, refreshed.status.deletions), (2, 0));
+        }.await;
+        std::fs::remove_dir_all(root).unwrap();
+        result
     }
 
     #[test]

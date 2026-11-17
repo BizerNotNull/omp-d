@@ -49,6 +49,26 @@ children; it asks the supervisor to start, send to, or stop them.
    session bucket through Rust `list_sessions`. A separate `get_entries`
    request loads branch metadata without blocking transcript hydration.
 
+## Model catalog
+
+`model-catalog.ts` shares model and role snapshots and in-flight requests across
+session stores, keyed by normalized workspace, binary and catalog-relevant CLI
+arguments. Each resource has its own success timestamp, loading state and error.
+Successful snapshots persist in localStorage with a five-minute freshness window.
+Connections and picker opens reuse fresh data; expired data remains usable while
+one shared query refreshes it. Manual refresh bypasses freshness but joins an
+existing request. Failed refreshes retain the previous data and success timestamp.
+
+Provider login invalidates its catalog context; successful global settings writes
+invalidate all contexts. Invalidation advances a revision so earlier queries cannot
+publish obsolete results, then refreshes subscribed contexts after any old query
+finishes. Workspace changes unsubscribe the runtime from its previous context.
+The current agent still validates model selection through `set_model`.
+
+The existing IPC diagnostics measure each CLI query end to end. Native
+`catalog_cli_completed` and `catalog_parsed` events separate preparation,
+subprocess execution and parsing time without logging paths, arguments or output.
+
 ## Provider login
 
 The `/models` provider sidebar retains model availability as a separate
@@ -210,6 +230,19 @@ breaking timestamp ties. Scope and pinned-path filters apply before pagination.
 Global search matches titles, Worktree labels, and message content throughout
 the JSONL file; it is not restricted to the summary preview.
 
+Native discovery uses a two-second, per-directory single-flight cache (up to 32
+directories); Git errors are not cached. Branch labels and Worktree registrations
+can therefore lag external changes by up to two seconds. Session files are still
+enumerated on every query, so additions and deletions do not wait for that TTL.
+An in-memory LRU cache retains at most 4096 parsed summaries, visibility checks,
+and the last full-text query result per file. Entries are validated against file
+size and full-resolution modification/creation times, not the millisecond page
+cursor. Changed files are reread; snapshots changed during reading are not cached.
+No session index is written to disk. New search terms still stream file contents,
+preserving bounded memory for oversized JSONL messages. The scanner processes
+unescaped ASCII strings in buffered runs; Unicode and JSON escapes retain the
+decoded-character matcher, including matches crossing buffer boundaries.
+
 The sidebar has fixed Recent/Running/Pinned controls and a searchable Worktree
 popover above an independently scrolling, fixed-row virtualized list. Running
 state comes from live runtimes, including background Agent work. Session and
@@ -256,6 +289,22 @@ changes the list. Opening a session never changes the filter.
   clearing the conversation, persists it for restart, and refreshes directory-
   scoped sessions, catalog, and Git status. The extension file lives for the
   child process lifetime; generation filtering rejects old-process updates.
+
+## Git queries
+
+`git_status`, `get_git_changes`, and `get_git_diff` share a native per-directory
+snapshot. The bounded 32-directory LRU shares in-flight scans and reuses successful
+results for one second after completion; errors are not cached. External changes
+can remain absent until this window and the existing UI polling interval expire.
+The cache is memory-only and never changes repository configuration or the index.
+
+Repository-root discovery and porcelain-v2 status run concurrently. A single
+`diff --raw --numstat -z` supplies tracked paths, rename sources, and net HEAD line
+totals with one tree walk. Porcelain-v2 paths remain root-relative for nested
+workspaces. Status does not wait for untracked file line counting; changed-file
+requests share that lazy enrichment, with at most four Git subprocesses per
+snapshot. Binary and oversized files keep null counts. Diff patches are read
+fresh, retain literal pathspecs and path/size checks, and reuse only list metadata.
 
 ## Composer status
 

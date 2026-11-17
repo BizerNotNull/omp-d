@@ -3,7 +3,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { create, type StoreApi, type UseBoundStore } from "zustand";
 import { OmpClient, RpcFailure, type OmpClientEvent } from "./client";
-import { catalogCacheKey, readCatalog, splitExtraArgs, writeCatalog } from "./model-catalog";
+import { catalogCacheKey, catalogSnapshot, fetchCatalog, splitExtraArgs, subscribeCatalog } from "./model-catalog";
 import { projectMessageBranches, sessionTreeFromEntries, type MessageBranch } from "./branches";
 import { configureSessionNavigation, rememberActiveSession, sessionPathKey, useSessionNavigation } from "./navigation";
 import type {
@@ -160,6 +160,8 @@ interface AppState {
   modelRoles: Record<string, string>;
   modelsLoading: boolean;
   modelsError?: string;
+  rolesLoading: boolean;
+  rolesError?: string;
 
   sessionListing?: SessionListing;
   sessionsLoading: boolean;
@@ -197,7 +199,7 @@ interface AppState {
   switchSession: (path: string, cwd?: string) => Promise<void>;
   renameSession: (name: string) => Promise<void>;
 
-  fetchModels: () => Promise<void>;
+  fetchModels: (force?: boolean) => Promise<void>;
   setModel: (provider: string, id: string) => Promise<boolean>;
   setThinkingLevel: (level: string) => Promise<void>;
 
@@ -217,7 +219,16 @@ const runtimeModifiedTimes = new Map<number, number>();
 function createRuntimeStore(id: number, initialSessionPath?: string) {
 const omp = new OmpClient();
 let connectTicket = 0;
-let catalogRequest = 0;
+let catalogSubscription: (() => void) | undefined;
+let subscribedCatalogKey: string | undefined;
+function bindCatalog(key: string) {
+  if (key === subscribedCatalogKey) return;
+  catalogSubscription?.();
+  subscribedCatalogKey = key;
+  catalogSubscription = subscribeCatalog(key, (snapshot) => {
+    if (runtime.getState().status === "starting" || runtime.getState().status === "ready") runtime.setState(snapshot);
+  });
+}
 runtimeModifiedTimes.set(id, initialSessionPath ? 0 : Date.now());
 let refreshing: Promise<void> | undefined;
 let refreshAgain = false;
@@ -286,6 +297,7 @@ const runtime = create<AppState>()((set, get) => ({
   commands: [],
   thinkingLevels: [],
   modelsLoading: false,
+  rolesLoading: false,
   modelRoles: {},
   sessionListing: undefined,
   sessionsLoading: false,
@@ -341,15 +353,13 @@ const runtime = create<AppState>()((set, get) => ({
     const entry = runtimes.get(id);
     if (entry && initialSessionPath) entry.path = initialSessionPath;
     const preferences = { ...get().preferences, ...prefs };
-    const cachedCatalog = readCatalog(catalogCacheKey(cwd, preferences));
+    const cachedCatalog = catalogSnapshot(catalogCacheKey(cwd, preferences));
     set({
       status: "starting",
       error: undefined,
       cwd,
       preferences,
       ...cachedCatalog,
-      modelsLoading: false,
-      modelsError: undefined,
       messages: withMessageKeys([]).messages,
       messageKeys: new Set<string>(),
       pending: [],
@@ -371,6 +381,7 @@ const runtime = create<AppState>()((set, get) => ({
       gitStatusError: undefined,
     });
     set({ busy: false, queue: { steering: [], followUp: [] }, startInfo: undefined, protocolVersion: undefined });
+    bindCatalog(catalogCacheKey(cwd, preferences));
     savePreferences(preferences);
     try {
       const extraArgs = splitExtraArgs(preferences.extraArgs);
@@ -410,8 +421,10 @@ const runtime = create<AppState>()((set, get) => ({
 
   disconnect: async () => {
     ++connectTicket;
+    catalogSubscription?.();
+    subscribedCatalogKey = undefined;
     await omp.stop();
-    set({ status: "stopped", subagents: {}, subagentMessages: {}, subagentsAvailable: undefined, busy: false, branching: false, treeLoading: false, queue: { steering: [], followUp: [] }, modelsLoading: false, sessionsLoading: false });
+    set({ status: "stopped", subagents: {}, subagentMessages: {}, subagentsAvailable: undefined, busy: false, branching: false, treeLoading: false, queue: { steering: [], followUp: [] }, modelsLoading: false, rolesLoading: false, sessionsLoading: false });
   },
 
   updatePreferences: (partial) => {
@@ -420,13 +433,16 @@ const runtime = create<AppState>()((set, get) => ({
     savePreferences(preferences);
     set({ preferences });
     for (const entry of runtimes.values()) {
-      if (entry.store !== runtime) entry.store.setState({ preferences });
+      if (entry.store !== runtime) {
+        entry.store.setState({ preferences });
+        const cwd = entry.store.getState().cwd;
+        if (cwd && catalogCacheKey(cwd, previous) !== catalogCacheKey(cwd, preferences)) void entry.store.getState().fetchModels(true);
+      }
     }
     const cwd = get().cwd;
     if (cwd && catalogCacheKey(cwd, previous) !== catalogCacheKey(cwd, preferences)) {
-      ++catalogRequest;
-      set({ ...readCatalog(catalogCacheKey(cwd, preferences)), modelsLoading: false, modelsError: undefined });
-      void get().fetchModels();
+      bindCatalog(catalogCacheKey(cwd, preferences));
+      void get().fetchModels(true);
     }
   },
 
@@ -812,37 +828,12 @@ const runtime = create<AppState>()((set, get) => ({
     }
   },
 
-  fetchModels: async () => {
-    const { cwd, preferences, status, modelsLoading } = get();
-    if (!cwd || modelsLoading || (status !== "ready" && status !== "starting")) return;
-    const ticket = connectTicket;
+  fetchModels: async (force = false) => {
+    const { cwd, preferences, status } = get();
+    if (!cwd || (status !== "ready" && status !== "starting")) return;
     const key = catalogCacheKey(cwd, preferences);
-    const options = { cwd, binary: preferences.binary.trim() || "omp", extraArgs: splitExtraArgs(preferences.extraArgs) };
-    const request = ++catalogRequest;
-    const current = () => ticket === connectTicket && request === catalogRequest && (get().status === "starting" || get().status === "ready");
-    const persist = () => {
-      const { models, modelRoles } = get();
-      writeCatalog(key, { models, modelRoles });
-    };
-    set({ modelsLoading: true, modelsError: undefined });
-    const results = await Promise.allSettled([
-      invoke<Model[]>("model_catalog", { options }).then((models) => {
-        if (!current()) return;
-        set({ models });
-        persist();
-      }),
-      invoke<Record<string, string>>("model_roles", { options }).then((modelRoles) => {
-        if (!current()) return;
-        set({ modelRoles });
-        persist();
-      }),
-    ]);
-    if (!current()) return;
-    const errors = results.flatMap((result) => result.status === "rejected" ? [describeError(result.reason)] : []);
-    if (options.extraArgs.some(arg => arg === "--config" || arg.startsWith("--config="))) {
-      errors.push("Model roles reflect project/profile settings only; the CLI does not support config overlays for role queries.");
-    }
-    set({ modelsLoading: false, modelsError: errors.length ? errors.join("; ") : undefined });
+    bindCatalog(key);
+    await fetchCatalog(key, { cwd, binary: preferences.binary.trim() || "omp", extraArgs: splitExtraArgs(preferences.extraArgs) }, force);
   },
 
   setModel: async (provider, id) => {
@@ -1113,8 +1104,9 @@ const runtime = create<AppState>()((set, get) => ({
         set({ protocolVersion: event.ready.protocolVersion });
         return;
       case "disconnected":
-        ++catalogRequest;
-        set({ status: "stopped", subagents: {}, subagentMessages: {}, subagentsAvailable: undefined, busy: false, branching: false, treeLoading: false, error: event.reason, modelsLoading: false });
+        catalogSubscription?.();
+        subscribedCatalogKey = undefined;
+        set({ status: "stopped", subagents: {}, subagentMessages: {}, subagentsAvailable: undefined, busy: false, branching: false, treeLoading: false, error: event.reason, modelsLoading: false, rolesLoading: false });
         return;
       case "protocol":
         appendDiagnostic(set, `${event.event.kind}: ${event.event.message}`);
@@ -1125,8 +1117,9 @@ const runtime = create<AppState>()((set, get) => ({
         return;
       case "process":
         if (event.event.kind === "error") {
-          ++catalogRequest;
-          set({ status: "error", subagents: {}, subagentMessages: {}, subagentsAvailable: undefined, error: event.event.message, busy: false, branching: false, treeLoading: false, modelsLoading: false });
+          catalogSubscription?.();
+          subscribedCatalogKey = undefined;
+          set({ status: "error", subagents: {}, subagentMessages: {}, subagentsAvailable: undefined, error: event.event.message, busy: false, branching: false, treeLoading: false, modelsLoading: false, rolesLoading: false });
         }
         return;
     }
@@ -1289,15 +1282,12 @@ function handleExtensionRequest(request: ExtensionUIRequest, set: SetState, get:
         const cwd = request.statusText;
         if (!cwd || cwd === get().cwd) return;
         runtimeModifiedTimes.set(id, Date.now());
-        ++catalogRequest;
         if (activeRuntime === runtime) localStorage.setItem(LAST_CWD_KEY, cwd);
         set({
           cwd,
           gitStatus: undefined,
           gitStatusError: undefined,
-          ...readCatalog(catalogCacheKey(cwd, get().preferences)),
-          modelsLoading: false,
-          modelsError: undefined,
+          ...catalogSnapshot(catalogCacheKey(cwd, get().preferences)),
         });
         void get().loadSessions();
         void get().fetchModels();

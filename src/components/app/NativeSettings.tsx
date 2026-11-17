@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAppStore } from "@/lib/omp/store";
-import { splitExtraArgs } from "@/lib/omp/model-catalog";
+import { invalidateCatalog, splitExtraArgs } from "@/lib/omp/model-catalog";
 import type { StartOptions } from "@/lib/omp/types";
 import {
   effectiveSettingSummary,
@@ -137,6 +137,7 @@ export function NativeSettings({ active }: { active: boolean }) {
         value: removing ? null : entry.type === "string" || entry.type === "enum" ? JSON.stringify(draft.text) : draft.text,
         reset: removing,
       });
+      invalidateCatalog();
       if (!isCurrent()) return;
       let success = removing
         ? "Global override removed. Defaults, project settings, or environment now apply. Restart the agent to apply."

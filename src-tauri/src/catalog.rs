@@ -65,6 +65,7 @@ fn catalog_args(options: &StartOptions, models: bool) -> (Vec<String>, Option<St
 }
 
 async fn query(options: StartOptions, models: bool) -> Result<Value, String> {
+    let started = std::time::Instant::now();
     let cwd = std::fs::canonicalize(&options.cwd).map_err(|_| "Cannot open catalog project directory".to_string())?;
     if !cwd.is_dir() {
         return Err("Catalog project path is not a directory".into());
@@ -87,13 +88,20 @@ async fn query(options: StartOptions, models: bool) -> Result<Value, String> {
     }
     #[cfg(windows)]
     command.creation_flags(0x0800_0000);
+    let cli_started = std::time::Instant::now();
     let output = tokio::time::timeout(Duration::from_secs(30), command.output())
         .await.map_err(|_| "Model catalog CLI timed out after 30 seconds".to_string())?
         .map_err(|_| "Cannot execute configured omp binary for model catalog".to_string())?;
+    tracing::info!(target: "omp_d::catalog", event = "catalog_cli_completed",
+        query = if models { "models" } else { "roles" },
+        prepare_ms = cli_started.duration_since(started).as_millis() as u64,
+        duration_ms = cli_started.elapsed().as_millis() as u64,
+        success = output.status.success());
     if !output.status.success() {
         return Err(format!("Model catalog CLI exited unsuccessfully ({})", output.status));
     }
-    if models {
+    let parse_started = std::time::Instant::now();
+    let result = if models {
         let stdout = std::str::from_utf8(&output.stdout).map_err(|_| "Model catalog CLI returned invalid UTF-8")?;
         let (available, catalog) = stdout.rsplit_once("\nOMP_D_CATALOG:")
             .ok_or("Model catalog extension returned no full registry")?;
@@ -119,7 +127,12 @@ async fn query(options: StartOptions, models: bool) -> Result<Value, String> {
         Ok(result)
     } else {
         serde_json::from_slice(&output.stdout).map_err(|_| "Model catalog CLI returned invalid JSON".to_string())
-    }
+    };
+    tracing::info!(target: "omp_d::catalog", event = "catalog_parsed",
+        query = if models { "models" } else { "roles" },
+        duration_ms = parse_started.elapsed().as_millis() as u64,
+        success = result.is_ok());
+    result
 }
 
 pub async fn models(options: StartOptions) -> Result<Value, String> {

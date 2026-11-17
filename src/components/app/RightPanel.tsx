@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Check, ChevronRight, Circle, CircleAlert, CircleDot, LoaderCircle, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatTokens } from "@/lib/omp/format";
@@ -24,6 +25,7 @@ export function FileChangeRow({ file, onClick }: { file: ChangedFile; onClick: (
 
 export function RightPanel({ data, onInspect, onClose }: { data: InspectorData; onInspect: (selection: InspectorSelection) => void; onClose: () => void }) {
   const { session, tasks, activeTask, agents, files, state, activity } = data;
+  const [changesExpanded, setChangesExpanded] = useState(false);
   const completed = tasks.filter((task) => task.status === "completed").length;
   const activeAgents = agents.filter((agent) => agent.status !== "success");
   const finishedAgents = agents.length - activeAgents.length;
@@ -55,8 +57,8 @@ export function RightPanel({ data, onInspect, onClose }: { data: InspectorData; 
         </section>}
         {files && files.length > 0 && <section aria-label="Changes" className="py-4">
           <div className="mb-2 flex items-center justify-between px-1"><h3 className="text-[11px] font-medium text-muted-foreground">Changes</h3><span className="text-[10px] tabular-nums text-muted-foreground">{files.length} files</span></div>
-          <div className="inspector-files">{[...files].sort((a, b) => Number(b.status === "conflicted") - Number(a.status === "conflicted") || Number(data.sessionFiles?.includes(b)) - Number(data.sessionFiles?.includes(a))).slice(0, 5).map((file) => <FileChangeRow key={file.path} file={file} onClick={() => onInspect({ kind: "diff", path: file.path })} />)}</div>
-          <button type="button" onClick={() => onInspect({ kind: "changes" })} className="mt-2 flex w-full items-center justify-between rounded px-2 py-1.5 text-[11px] text-muted-foreground hover:bg-sidebar-accent hover:text-foreground">View all changes<ChevronRight className="size-3" /></button>
+          <div id="inspector-changes" className="inspector-files">{[...files].sort((a, b) => Number(b.status === "conflicted") - Number(a.status === "conflicted") || Number(data.sessionFiles?.includes(b)) - Number(data.sessionFiles?.includes(a))).slice(0, changesExpanded ? undefined : 5).map((file) => <FileChangeRow key={file.path} file={file} onClick={() => onInspect({ kind: "diff", path: file.path })} />)}</div>
+          {files.length > 5 && <button type="button" aria-expanded={changesExpanded} aria-controls="inspector-changes" onClick={() => setChangesExpanded((expanded) => !expanded)} className="mt-2 flex w-full items-center justify-between rounded px-2 py-1.5 text-[11px] text-muted-foreground hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">{changesExpanded ? "Show fewer changes" : "View all changes"}<ChevronRight className={cn("size-3", changesExpanded && "rotate-90")} /></button>}
         </section>}
         {data.gitError && <button type="button" onClick={() => onInspect({ kind: "changes" })} className="my-3 flex items-center gap-2 px-1 text-left text-[11px] text-destructive"><CircleAlert className="size-3.5" />Cannot read Git changes<ChevronRight className="size-3" /></button>}
       </div>

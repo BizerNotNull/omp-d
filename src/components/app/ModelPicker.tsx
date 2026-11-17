@@ -17,8 +17,10 @@ const roleRank = (role: string) => { const index = ROLE_ORDER.indexOf(role); ret
 export function ModelPicker({ onClose, onLoginRequest, active = true }: { onClose: () => void; onLoginRequest: (provider: string) => void; active?: boolean }) {
   const models = useAppStore((state) => state.models);
   const roles = useAppStore((state) => state.modelRoles);
-  const loading = useAppStore((state) => state.modelsLoading);
-  const error = useAppStore((state) => state.modelsError);
+  const modelsLoading = useAppStore((state) => state.modelsLoading);
+  const modelsError = useAppStore((state) => state.modelsError);
+  const rolesLoading = useAppStore((state) => state.rolesLoading);
+  const rolesError = useAppStore((state) => state.rolesError);
   const fetchModels = useAppStore((state) => state.fetchModels);
   const setModel = useAppStore((state) => state.setModel);
   const current = useAppStore((state) => state.session?.model);
@@ -27,12 +29,14 @@ export function ModelPicker({ onClose, onLoginRequest, active = true }: { onClos
   const [provider, setProvider] = useState<string>();
   const [view, setView] = useState<"models" | "roles">("models");
   const [kind, setKind] = useState("all");
-  const [highlighted, setHighlighted] = useState(0);
+  const [highlighted, setHighlighted] = useState<string>();
   const [selecting, setSelecting] = useState(false);
   const [scrollTop, setScrollTop] = useState(0);
   const [height, setHeight] = useState(400);
   const selectionPending = useRef(false);
   const listRef = useRef<HTMLDivElement>(null);
+  const loading = view === "models" ? modelsLoading : rolesLoading;
+  const error = view === "models" ? modelsError : rolesError;
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -40,8 +44,8 @@ export function ModelPicker({ onClose, onLoginRequest, active = true }: { onClos
   }, [active]);
 
   useEffect(() => {
-    if (useAppStore.getState().models === undefined && status === "ready") void fetchModels();
-  }, [fetchModels, status]);
+    if (active && status === "ready") void fetchModels();
+  }, [active, fetchModels, status]);
 
   const catalog = useMemo(() => {
     const entries = [...(models ?? [])];
@@ -73,7 +77,7 @@ export function ModelPicker({ onClose, onLoginRequest, active = true }: { onClos
     const search = query.trim().toLowerCase();
     return (!provider || selector.startsWith(`${provider}/`)) && (!search || `${role} ${selector}`.toLowerCase().includes(search));
   }).sort(([left], [right]) => roleRank(left) - roleRank(right) || left.localeCompare(right)), [roles, provider, query]);
-  const selectedIndex = Math.min(highlighted, Math.max(0, filtered.length - 1));
+  const selectedIndex = Math.max(0, filtered.findIndex((model) => modelKey(model) === highlighted));
   const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
   const end = Math.min(filtered.length, Math.ceil((scrollTop + height) / ROW_HEIGHT) + OVERSCAN);
 
@@ -86,7 +90,7 @@ export function ModelPicker({ onClose, onLoginRequest, active = true }: { onClos
   }, [view]);
 
   useEffect(() => {
-    setHighlighted(0);
+    setHighlighted(undefined);
     setScrollTop(0);
     if (listRef.current) listRef.current.scrollTop = 0;
   }, [query, provider, kind, view]);
@@ -106,7 +110,7 @@ export function ModelPicker({ onClose, onLoginRequest, active = true }: { onClos
   function navigate(delta: number) {
     if (!filtered.length) return;
     const next = (selectedIndex + delta + filtered.length) % filtered.length;
-    setHighlighted(next);
+    setHighlighted(modelKey(filtered[next]));
     const list = listRef.current;
     if (!list) return;
     const top = next * ROW_HEIGHT;
@@ -151,7 +155,7 @@ export function ModelPicker({ onClose, onLoginRequest, active = true }: { onClos
         <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 p-3 sm:p-5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="min-w-0 break-all text-sm font-medium">{view === "roles" ? "Model roles" : provider ?? "All available models"}</h2>
-            <Button variant="ghost" size="sm" aria-label="Refresh model catalog" onClick={() => void fetchModels()} disabled={loading || selecting || status !== "ready"}>
+            <Button variant="ghost" size="sm" aria-label="Refresh model catalog" onClick={() => void fetchModels(true)} disabled={loading || selecting || status !== "ready"}>
               {loading ? <LoaderCircle className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}<span className="hidden sm:inline">Refresh</span>
             </Button>
           </div>
@@ -166,7 +170,7 @@ export function ModelPicker({ onClose, onLoginRequest, active = true }: { onClos
               else if (event.key === "Enter") { event.preventDefault(); const model = filtered[selectedIndex]; if (model) void choose(model); }
             }} placeholder={view === "roles" ? "Search roles…" : "Search models…"} className="pl-8" />
           </div>
-          {error && <div role="alert" className="text-xs text-destructive">{error}</div>}
+          {error && <div role="alert" className="text-xs text-destructive">{error}{(view === "models" ? models !== undefined : Object.keys(roles).length > 0) && " Showing the last saved catalog."}</div>}
           {status !== "ready" && <p role="status" className="text-xs text-muted-foreground">Connect to the agent to change models.</p>}
           {view === "models" && provider && selectedProvider?.available === 0 && <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><p role="status">This provider needs authentication or configuration. Catalog models below cannot be selected yet.</p><Button variant="outline" size="sm" disabled={selecting} onClick={() => onLoginRequest(provider)}>Sign in to {provider}</Button></div>}
           <div id="model-options" ref={listRef} aria-label={view === "roles" ? "Configured roles" : "Available models"} className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-md border" onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}>
@@ -177,14 +181,14 @@ export function ModelPicker({ onClose, onLoginRequest, active = true }: { onClos
                 <div className="min-w-0 flex-1 basis-full sm:basis-0"><h3 className="text-sm font-medium">{role}</h3><p className="break-all font-mono text-xs text-muted-foreground">{selector}</p></div>
                 {assigned && <Button variant="ghost" size="sm" disabled={selecting || status !== "ready" || assigned.available === false} onClick={() => void choose(assigned)}>Use model</Button>}
               </div>;
-            })}{roleEntries.length === 0 && <p className="p-4 text-xs text-muted-foreground">{loading ? "Loading role assignments…" : query ? "No roles match that filter." : "No model roles configured."}</p>}</div> : <>
-              {loading && catalog.entries.length === 0 && <p role="status" className="p-4 text-xs text-muted-foreground">Loading the model catalog…</p>}
-              {!loading && filtered.length === 0 && <p className="p-4 text-xs text-muted-foreground">{query || provider || kind !== "all" ? "No models match these filters." : "No models available. Refresh after checking provider configuration."}</p>}
+            })}{roleEntries.length === 0 && <p className="p-4 text-xs text-muted-foreground">{loading ? "Loading role assignments…" : error ? "Role assignments could not be refreshed. Use Refresh to retry." : query ? "No roles match that filter." : "No model roles configured."}</p>}</div> : <>
+              {(modelsLoading || (models === undefined && !modelsError && (status === "starting" || status === "ready"))) && <p role="status" className="p-4 text-xs text-muted-foreground">{models === undefined ? "Reading the local model catalog…" : "Updating the model catalog…"}</p>}
+              {!modelsLoading && filtered.length === 0 && <p className="p-4 text-xs text-muted-foreground">{modelsError ? "The model catalog could not be refreshed. Use Refresh to retry." : models === undefined ? "The model catalog has not loaded yet." : query || provider || kind !== "all" ? "No models match these filters." : "No models available. Refresh after checking provider configuration."}</p>}
               <div style={{ height: filtered.length * ROW_HEIGHT, position: "relative" }}>
                 {filtered.slice(start, end).map((model, offset) => {
                   const index = start + offset;
                   const active = current && modelKey(current) === modelKey(model);
-                  return <button key={modelKey(model)} type="button" data-index={index} aria-pressed={Boolean(active)} aria-label={modelKey(model)} disabled={selecting || status !== "ready" || model.available === false} onFocus={() => setHighlighted(index)} onClick={() => void choose(model)} style={{ position: "absolute", top: index * ROW_HEIGHT, height: ROW_HEIGHT, left: 0, right: 0 }} className={cn("flex w-full items-center gap-2 border-b px-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default", index === selectedIndex ? "bg-muted" : "enabled:hover:bg-muted/50")}>
+                  return <button key={modelKey(model)} type="button" data-index={index} aria-pressed={Boolean(active)} aria-label={modelKey(model)} disabled={selecting || status !== "ready" || model.available === false} onFocus={() => setHighlighted(modelKey(model))} onClick={() => void choose(model)} style={{ position: "absolute", top: index * ROW_HEIGHT, height: ROW_HEIGHT, left: 0, right: 0 }} className={cn("flex w-full items-center gap-2 border-b px-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default", index === selectedIndex ? "bg-muted" : "enabled:hover:bg-muted/50")}>
                     <div className="min-w-0 flex-1"><div className="truncate font-mono text-xs" title={modelKey(model)}><span className="text-muted-foreground">{model.provider}/</span>{model.id}</div>
                       <div className="mt-1 flex gap-3 overflow-hidden whitespace-nowrap text-[10px] text-muted-foreground">
                         {!!model.contextWindow && <span>{formatTokens(model.contextWindow)} ctx</span>}

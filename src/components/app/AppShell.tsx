@@ -11,7 +11,7 @@ import { Toasts } from "./Toasts";
 import { ModelPicker } from "./ModelPicker";
 import { ProviderLogin } from "./ProviderLogin";
 import { SettingsDialog } from "./SettingsDialog";
-import { splitExtraArgs } from "@/lib/omp/model-catalog";
+import { catalogCacheKey, invalidateCatalog, splitExtraArgs } from "@/lib/omp/model-catalog";
 import { useAppStore } from "@/lib/omp/store";
 import { InspectorDetail } from "./InspectorDetail";
 import { useInspectorData, type InspectorSelection } from "@/lib/omp/inspector-data";
@@ -96,7 +96,7 @@ export function AppShell() {
               panelOpen={panelOpen}
             />}
             {modelsOpen && <div className={loginProvider ? "hidden" : "flex min-h-0 flex-1 flex-col"}><ModelPicker active={!loginProvider} onClose={() => setModelsOpen(false)} onLoginRequest={setLoginProvider} /></div>}
-            {modelsOpen && loginProvider && <ProviderLogin key={`${cwd}:${loginProvider}`} provider={loginProvider} options={{ cwd, binary: preferences.binary.trim() || "omp", extraArgs: splitExtraArgs(preferences.extraArgs) }} onBack={() => setLoginProvider(undefined)} onSuccess={() => { setLoginProvider(undefined); void useAppStore.getState().fetchModels(); }} />}
+            {modelsOpen && loginProvider && <ProviderLogin key={`${cwd}:${loginProvider}`} provider={loginProvider} options={{ cwd, binary: preferences.binary.trim() || "omp", extraArgs: splitExtraArgs(preferences.extraArgs) }} onBack={() => setLoginProvider(undefined)} onSuccess={() => { setLoginProvider(undefined); if (cwd) invalidateCatalog(catalogCacheKey(cwd, preferences)); void useAppStore.getState().fetchModels(); }} />}
             {!modelsOpen && selection && <InspectorDetail selection={selection} data={inspector} onSelect={inspect} onClose={() => setInspection(undefined)} />}
             <div className={modelsOpen || selection ? "hidden" : "flex min-h-0 flex-1 flex-col overflow-hidden"}>
               <ChatView key={`chat-${activeRuntimeId}`} />

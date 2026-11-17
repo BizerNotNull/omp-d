@@ -3,17 +3,135 @@
 //! Layout: `~/.omp/agent/sessions/<encoded-cwd>/<timestamp>_<id>.jsonl`.
 //! Each file starts with a fixed-width title slot followed by a session header.
 
+use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
-use std::time::Duration;
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::{Duration, Instant, SystemTime};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::process::Command;
 
 const SESSION_READ_BYTES: u64 = 32 * 1024;
+const DISCOVERY_TTL: Duration = Duration::from_secs(2);
+const SUMMARY_CACHE_LIMIT: usize = 4096;
+
+type Discovery = (PathBuf, Vec<SessionDirectory>);
+type DiscoverySlot = Arc<tokio::sync::Mutex<Option<(Instant, Discovery)>>>;
+
+// Per-directory single-flight: unrelated projects never wait for each other's Git.
+async fn cached_directories(cwd: &Path) -> Result<Discovery, String> {
+    static CACHE: LazyLock<Mutex<VecDeque<(PathBuf, DiscoverySlot)>>> = LazyLock::new(Mutex::default);
+    let slot = {
+        let mut cache = CACHE.lock().unwrap();
+        if let Some(index) = cache.iter().position(|(path, _)| path == cwd) {
+            let entry = cache.remove(index).unwrap();
+            let slot = entry.1.clone();
+            cache.push_back(entry);
+            slot
+        } else {
+            let slot = Arc::new(tokio::sync::Mutex::new(None));
+            if cache.len() == 32 { cache.pop_front(); }
+            cache.push_back((cwd.to_path_buf(), slot.clone()));
+            slot
+        }
+    };
+    let mut cached = slot.lock().await;
+    if let Some((at, discovery)) = &*cached
+        && at.elapsed() < DISCOVERY_TTL
+    {
+        return Ok(discovery.clone());
+    }
+    let discovery = discover_directories(cwd).await?;
+    *cached = Some((Instant::now(), discovery.clone()));
+    Ok(discovery)
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct FileStamp {
+    modified: Option<SystemTime>,
+    created: Option<SystemTime>,
+    size: u64,
+}
+
+impl FileStamp {
+    fn from_metadata(metadata: &std::fs::Metadata) -> Self {
+        Self {
+            modified: metadata.modified().ok(),
+            created: metadata.created().ok(),
+            size: metadata.len(),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct CachedSession {
+    stamp: FileStamp,
+    summary: Option<SessionSummary>,
+    visible: bool,
+    search: Option<(String, bool)>,
+    accessed: Instant,
+}
+
+fn cached_summary(file: &SessionFile, query: Option<&str>) -> Option<SessionSummary> {
+    static CACHE: LazyLock<Mutex<HashMap<String, CachedSession>>> = LazyLock::new(Mutex::default);
+    let previous = {
+        let mut cache = CACHE.lock().unwrap();
+        let entry = cache.get_mut(&file.path)
+            .filter(|entry| entry.stamp == file.stamp && file.stamp.modified.is_some());
+        if let Some(entry) = entry {
+            entry.accessed = Instant::now();
+            if !entry.visible { return None; }
+            match query {
+                None => return entry.summary.clone(),
+                Some(query) if entry.search.as_ref().is_some_and(|(previous, _)| previous == query) => {
+                    return if entry.search.as_ref().is_some_and(|(_, matches)| *matches) {
+                        entry.summary.clone()
+                    } else { None };
+                }
+                _ => Some(entry.clone()),
+            }
+        } else {
+            None
+        }
+    };
+    let mut cached = previous.unwrap_or_else(|| {
+        let summary = read_summary(Path::new(&file.path), Path::new(&file.cwd), file.modified_ms, file.size);
+        let visible = summary.as_ref().is_some_and(|summary|
+            summary.title.is_some() || summary.preview.is_some() || session_matches(Path::new(&file.path), ""));
+        CachedSession {
+            stamp: file.stamp.clone(), summary, visible, search: None, accessed: Instant::now(),
+        }
+    });
+    let matches = cached.visible && query.is_none_or(|query| {
+        if let Some((previous, matches)) = &cached.search
+            && previous == query
+        {
+            return *matches;
+        }
+        let matches = session_matches(Path::new(&file.path), query);
+        cached.search = Some((query.to_owned(), matches));
+        matches
+    });
+    cached.accessed = Instant::now();
+    let result = if matches { cached.summary.clone() } else { None };
+    // Do not publish a snapshot read while a writer was appending or renaming.
+    if std::fs::metadata(&file.path).ok().is_some_and(|metadata|
+        FileStamp::from_metadata(&metadata) == file.stamp)
+    {
+        let mut cache = CACHE.lock().unwrap();
+        if cache.len() >= SUMMARY_CACHE_LIMIT && !cache.contains_key(&file.path)
+            && let Some(oldest) = cache.iter().min_by_key(|(_, entry)| entry.accessed).map(|(path, _)| path.clone())
+        {
+            cache.remove(&oldest);
+        }
+        cache.insert(file.path.clone(), cached);
+    }
+    result
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -308,7 +426,7 @@ pub async fn list_sessions(
     let resolved = tokio::task::spawn_blocking(move || {
         std::fs::canonicalize(&cwd).map_err(|error| format!("Cannot open {cwd}: {error}"))
     }).await.map_err(|error| format!("Session discovery failed: {error}"))??;
-    let (repository, directories) = discover_directories(&resolved).await?;
+    let (repository, directories) = cached_directories(&resolved).await?;
     tokio::task::spawn_blocking(move || {
         listing_from_directories(repository, directories, &sessions_root(), limit,
             cursor.as_ref(), scope.as_deref(), query.as_deref(), paths.as_deref())
@@ -358,20 +476,9 @@ fn listing_from_directories(
         {
             continue;
         }
-        let path = Path::new(&file.path);
-        let Some(summary) = read_summary(path, Path::new(&file.cwd), file.modified_ms, file.size) else {
+        let Some(summary) = cached_summary(&file, query.as_deref().filter(|_| !directory_matches)) else {
             continue;
         };
-        // Keep unused sessions hidden, but do not mistake an oversized first
-        // message (outside the preview window) for an unused session.
-        if summary.title.is_none() && summary.preview.is_none() && !session_matches(path, "") {
-            continue;
-        }
-        if let Some(query) = &query
-            && !directory_matches && !session_matches(path, query)
-        {
-            continue;
-        }
         sessions.push(summary);
         if sessions.len() > limit {
             break;
@@ -439,6 +546,37 @@ fn session_matches(path: &Path, query: &str) -> bool {
                 let mut key = String::new();
                 let mut matched = 0;
                 loop {
+                    // Most session content is unescaped ASCII. Process a buffered
+                    // run directly instead of decoding and refilling per byte.
+                    let available = match reader.fill_buf() {
+                        Ok(bytes) => bytes,
+                        Err(_) => return false,
+                    };
+                    let length = available.iter().position(|byte|
+                        !matches!(*byte, 0x20..=0x7e) || matches!(*byte, b'"' | b'\\'))
+                        .unwrap_or(available.len());
+                    if length > 0 {
+                        if is_key {
+                            for byte in &available[..length] {
+                                if key.len() < 64 { key.push(*byte as char); }
+                            }
+                        } else if searchable {
+                            for byte in &available[..length] {
+                                if pattern.is_empty() {
+                                    if !byte.is_ascii_whitespace() { return true; }
+                                    continue;
+                                }
+                                let ch = byte.to_ascii_lowercase() as char;
+                                while matched > 0 && ch != pattern[matched] {
+                                    matched = fallback[matched - 1];
+                                }
+                                if ch == pattern[matched] { matched += 1; }
+                                if matched == pattern.len() { return true; }
+                            }
+                        }
+                        reader.consume(length);
+                        continue;
+                    }
                     let Some(byte) = next_byte(&mut reader) else { return false };
                     if byte == b'"' {
                         break;
@@ -545,6 +683,7 @@ struct SessionFile {
     cwd: String,
     modified_ms: u64,
     size: u64,
+    stamp: FileStamp,
 }
 
 fn read_bucket(dir: &Path, cwd: &Path, paths: Option<&[String]>) -> Result<Vec<SessionFile>, String> {
@@ -575,6 +714,7 @@ fn read_bucket(dir: &Path, cwd: &Path, paths: Option<&[String]>) -> Result<Vec<S
             .unwrap_or(0);
         sessions.push(SessionFile {
             path: normalize_path(&path), cwd: normalize_path(cwd), modified_ms, size: meta.len(),
+            stamp: FileStamp::from_metadata(&meta),
         });
     }
 
@@ -819,6 +959,60 @@ mod tests {
         SessionDirectory {
             cwd: normalize_path(cwd), is_worktree: false, branch: Some(branch.to_owned()),
         }
+    }
+
+    #[test]
+    fn search_keeps_matches_across_buffer_ascii_unicode_and_escape_boundaries() {
+        let temp = TempDir::new();
+        let path = temp.0.join("search.jsonl");
+        let prefix = "{\"type\":\"message\",\"message\":{\"role\":\"user\",\"content\":\"";
+        let padding = "a".repeat(8190 - prefix.len());
+        std::fs::write(&path, format!(
+            "{prefix}{padding}Ab\\u0043中\\ud83d\\ude80 tail\"}}}}\n"
+        )).unwrap();
+        assert!(session_matches(&path, "abc中🚀 tail"));
+        assert!(session_matches(&path, "aaaaabc中"));
+        assert!(!session_matches(&path, "abc中🚀 absent"));
+        assert!(!session_matches(&path, "content"));
+    }
+
+    #[test]
+    fn cached_pages_observe_renames_appends_search_changes_and_deletions() {
+        let temp = TempDir::new();
+        let cwd = &temp.0;
+        let root = cwd.join("sessions");
+        let page = |query: Option<&str>| listing_from_directories(
+            cwd.clone(), vec![directory(cwd, "main")], &root, 50, None, None, query, None,
+        ).unwrap().sessions;
+        write_session(&root, cwd, "test", Some("Before"));
+        let path = session_dir_for(cwd, &root).join("test.jsonl");
+        let timestamp = std::time::UNIX_EPOCH + Duration::from_secs(123456);
+        let set_modified = |time| File::options().write(true).open(&path).unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(time)).unwrap();
+        set_modified(timestamp + Duration::from_nanos(100));
+        assert_eq!(page(None)[0].title.as_deref(), Some("Before"));
+        assert_eq!(page(Some("before"))[0].session_id, "test");
+        assert!(page(Some("absent")).is_empty());
+        assert!(page(Some("absent")).is_empty());
+        // Same-size rename within the same millisecond must invalidate the cache.
+        write_session(&root, cwd, "test", Some("After!"));
+        set_modified(timestamp + Duration::from_nanos(200));
+        assert_eq!(page(None)[0].title.as_deref(), Some("After!"));
+        assert!(page(Some("before")).is_empty());
+        assert_eq!(page(Some("after!"))[0].session_id, "test");
+        assert!(page(Some("appended")).is_empty());
+        use std::io::Write;
+        writeln!(File::options().append(true).open(&path).unwrap(),
+            "{{\"type\":\"message\",\"message\":{{\"role\":\"user\",\"content\":\"appended\"}}}}").unwrap();
+        // Size changes invalidate even if a filesystem preserves the timestamp.
+        set_modified(timestamp + Duration::from_nanos(200));
+        assert_eq!(page(Some("appended"))[0].preview.as_deref(), Some("appended"));
+        std::fs::remove_file(path).unwrap();
+        assert!(page(None).is_empty());
+        write_session(&root, cwd, "hidden", None);
+        assert!(page(None).is_empty());
+        write_session(&root, cwd, "hidden", Some("Now visible"));
+        assert_eq!(page(None)[0].title.as_deref(), Some("Now visible"));
     }
 
     #[test]

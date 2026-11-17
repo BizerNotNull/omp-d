@@ -3,7 +3,10 @@
 ## Unreleased
 
 ### Fixed
-- Agent questions, confirmations, selections, and text editors now appear in a scrollable card above the composer instead of modal dialogs
+- Git status, changed files, and diff validation share a one-second, per-directory snapshot and concurrent scans. Tracked paths and line counts use one Git diff; repository discovery runs alongside status, and untracked counts use at most four Git processes instead of a serial loop
+- Session lists reuse unchanged file summaries and repeated full-text search results in a bounded memory cache. Full-text scanning processes ASCII in buffered runs. Concurrent Worktree discovery is shared and reused for two seconds; file additions, changes, and deletions are checked on every query
+- Model catalogs now share concurrent queries across sessions and reuse a five-minute persistent cache. Expired catalogs remain usable during background refresh; model and role loading and errors are independent
+- “View all changes” now expands the full file list in the right sidebar instead of navigating away from the conversation
 ## 0.1.0 — 2026-11-06
 
 Initial desktop client for Oh My Pi.

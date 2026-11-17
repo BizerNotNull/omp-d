@@ -207,6 +207,53 @@ body,
   50% { opacity: 1; transform: translateY(-2px); }
 }
 
+/* Native textarea keeps editing, IME, selection and sizing; paint is decorative. */
+.magic-keyword {
+  background-image: var(--keyword-gradient);
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+.prompt-editor-paint {
+  position: absolute;
+  overflow: hidden;
+  pointer-events: none;
+}
+.prompt-editor-text {
+  box-sizing: border-box;
+  min-height: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+.prompt-editor[data-highlighted] > textarea {
+  position: relative;
+  color: transparent;
+  caret-color: var(--foreground);
+}
+.prompt-editor[data-highlighted] > textarea::selection {
+  color: var(--foreground);
+  background: var(--accent);
+}
+.prompt-editor:focus-within:has(textarea:not(:disabled)) .magic-keyword {
+  background-size: 200% 100%;
+  animation: keyword-shimmer 3s linear infinite;
+}
+.prompt-editor:has(textarea:disabled) .prompt-editor-paint {
+  opacity: 0.5;
+}
+@keyframes keyword-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: 0 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .prompt-editor .magic-keyword { animation: none !important; background-size: 100% 100% !important; }
+}
+@media (forced-colors: active) {
+  .prompt-editor-paint { display: none; }
+  .prompt-editor[data-highlighted] > textarea { color: CanvasText; }
+  .magic-keyword { background: none; color: inherit; -webkit-text-fill-color: currentColor; }
+}
+
 /* --------------------------------------------------------------- markdown */
 
 .chat-markdown {

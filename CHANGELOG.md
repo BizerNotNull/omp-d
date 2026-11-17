@@ -3,13 +3,7 @@
 ## Unreleased
 
 ### Changed
-- The sidebar separates projects, Worktrees, and sessions. A searchable recent-project picker remembers repository roots across restarts, restores each project's last Worktree and session, and keeps other runtimes open. Project and session searches are separate; unavailable folders report an error without replacing the current project
-- Context resources now appear on hover or keyboard focus in the right sidebar; clicking no longer opens a separate page. Duplicate context indicators below the composer and in the bottom status bar have been removed
-- Empty conversations use a plain background, compact prompt shortcuts, and browsable tips adapted from Oh My Pi. Startup screens no longer show the grid or runtime introduction
-
-### Fixed
-- Worktree branch labels now refresh when Git status detects a branch switch in the active workspace, including switches made outside the app
-- Resource tooltips and their arrows now use the active theme's popover colors instead of inverted foreground/background colors
+- Magic prompt keywords (`ultrathink`, `chillax`, `orchestrate`, `workflowz`, `jevify`) now show omp-style gradients in the composer, message editor, and sent messages. Focused inputs shimmer unless reduced motion is enabled; code and XML/HTML regions are excluded. Prompts are sent unchanged for omp to process
 ## 0.1.0 — 2026-11-06
 
 Initial desktop client for Oh My Pi.

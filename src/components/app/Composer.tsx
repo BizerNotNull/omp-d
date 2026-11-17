@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import { ArrowUp, ImagePlus, LoaderCircle, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { PromptTextarea } from "./PromptText";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/omp/store";
 import type { AvailableCommand, ImageContent } from "@/lib/omp/types";
@@ -294,7 +294,7 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
           )}
 
           <div className="rounded-2xl border border-border/80 bg-card shadow-[0_8px_30px_-12px_rgba(0,0,0,0.45)] focus-within:border-ring/60 focus-within:ring-3 focus-within:ring-ring/10">
-            <Textarea
+            <PromptTextarea
               ref={textareaRef}
               disabled={branching}
               value={draft}

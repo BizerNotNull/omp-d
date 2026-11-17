@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Archive, ArrowUpRight, Brain, ChevronDown, ChevronLeft, ChevronRight, Lightbulb, LoaderCircle, Pencil, Scissors, Sparkles, SquareTerminal, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { PromptText, PromptTextarea } from "./PromptText";
 import type { MessageBranch } from "@/lib/omp/branches";
 import type { AgentMessage, AssistantMessage, ThinkingContent, ToolCallContent, ToolResultMessage } from "@/lib/omp/types";
 import { useAppStore, type ToolRun } from "@/lib/omp/store";
@@ -181,7 +181,7 @@ function UserBubble({ message, branch, disabled }: { message: AgentMessage; bran
       )}
       {editing ? (
         <div className="flex w-full min-w-0 flex-col gap-2">
-          <Textarea
+          <PromptTextarea
             ref={editorRef}
             aria-label="Edit user message"
             value={draft}
@@ -201,7 +201,7 @@ function UserBubble({ message, branch, disabled }: { message: AgentMessage; bran
         </div>
       ) : text ? (
         <div className="rounded-2xl rounded-tr-md border border-border/70 bg-secondary/70 px-3.5 py-2.5 text-[13.5px] leading-relaxed text-secondary-foreground shadow-sm">
-          <div className="break-words whitespace-pre-wrap">{text}</div>
+          <div className="break-words whitespace-pre-wrap"><PromptText text={text} /></div>
         </div>
       ) : null}
       <div className="flex items-center gap-1">

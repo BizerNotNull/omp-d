@@ -1,7 +1,7 @@
 import { useEffect } from "react";
-import { Gauge, GitBranch, Target } from "lucide-react";
+import { GitBranch, Target } from "lucide-react";
 import { useAppStore } from "@/lib/omp/store";
-import { formatTokens, stripAnsi, stripPrivateUse } from "@/lib/omp/format";
+import { stripAnsi, stripPrivateUse } from "@/lib/omp/format";
 import { sessionPathKey, useSessionNavigation } from "@/lib/omp/navigation";
 import { WorktreeSelector, worktreeName } from "./WorktreeSelector";
 
@@ -33,7 +33,6 @@ export function ComposerStatus({ active }: { active: boolean }) {
   }, [active, status, cwd, busy, refreshGitStatus]);
 
   const goal = session?.goal?.goal;
-  const usage = session?.contextUsage;
   const clean = git && !git.staged && !git.unstaged && !git.untracked && !git.conflicted;
   const markEntries = Object.entries(statusMarks)
     .map(([key, value]) => [key, stripPrivateUse(stripAnsi(value))] as const)
@@ -54,11 +53,6 @@ export function ComposerStatus({ active }: { active: boolean }) {
       {session?.thinkingLevel && <span title="Thinking level">{session.thinkingLevel}</span>}
       {session?.fastModeEnabled && <span>fast{session.fastModeActive === false ? " (inactive)" : ""}</span>}
       {session?.slowModeEnabled && <span>slow</span>}
-      {usage && (
-        <span className="inline-flex items-center gap-1" title={`${formatTokens(usage.tokens)} / ${formatTokens(usage.contextWindow)} context tokens`}>
-          <Gauge aria-hidden="true" className="size-3" />{Math.round(usage.percent)}% context
-        </span>
-      )}
       <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-x-2 gap-y-1 sm:ml-auto" title={gitError ?? cwd}>
         <GitBranch aria-hidden="true" className="size-3 shrink-0" />
         {git ? (

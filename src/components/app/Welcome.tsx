@@ -1,5 +1,4 @@
-import type { ReactNode } from "react";
-import { AlertTriangle, FolderOpen, LoaderCircle, Pi, Settings2, TerminalSquare } from "lucide-react";
+import { AlertTriangle, FolderOpen, LoaderCircle, Settings2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAppStore } from "@/lib/omp/store";
 
@@ -11,7 +10,7 @@ export function Welcome({ onOpenSettings }: { onOpenSettings: () => void }) {
   const restart = useAppStore((state) => state.restart);
 
   return (
-    <div className="grid-bg flex h-full flex-col items-center justify-center px-6">
+    <div className="flex h-full flex-col items-center justify-center overflow-y-auto px-6 py-8">
       <div className="w-full max-w-lg">
         <div className="mb-6 flex items-center gap-3">
           <div className="flex size-11 items-center justify-center rounded-xl border border-border bg-card text-2xl font-semibold shadow-sm">
@@ -19,7 +18,6 @@ export function Welcome({ onOpenSettings }: { onOpenSettings: () => void }) {
           </div>
           <div>
             <h1 className="text-lg font-semibold tracking-tight">omp-d</h1>
-            <p className="text-xs text-muted-foreground">A desktop window onto Oh My Pi.</p>
           </div>
           <Button
             variant="ghost"
@@ -54,39 +52,14 @@ export function Welcome({ onOpenSettings }: { onOpenSettings: () => void }) {
             </div>
           </div>
         ) : (
-          <>
-            <div className="rounded-2xl border bg-card p-5 shadow-sm">
-              <h2 className="text-sm font-medium">Open a project</h2>
-              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                omp-d runs the local <span className="font-mono text-[11px]">omp</span> binary in RPC mode and talks
-                to it over stdio. Sessions, tools, todos and checkpoints stay in Oh My Pi&apos;s own storage.
-              </p>
-              <Button className="mt-4 gap-2" onClick={() => void openProjectDialog()}>
-                <FolderOpen className="size-4" />
-                Choose project folder
-              </Button>
-            </div>
-
-            <div className="mt-4 grid grid-cols-1 gap-2 text-[11px] text-muted-foreground sm:grid-cols-3">
-              <Feature icon={<TerminalSquare className="size-3.5" />} label="RPC over stdio" value="v1 + v2 frames" />
-              <Feature icon={<Pi className="size-3.5" />} label="Sessions" value="resume on disk" />
-              <Feature icon={<LoaderCircle className="size-3.5" />} label="Streaming" value="text, thinking, tools" />
-            </div>
-          </>
+          <div className="flex justify-center py-6">
+            <Button className="gap-2" onClick={() => void openProjectDialog()}>
+              <FolderOpen className="size-4" />
+              Choose project folder
+            </Button>
+          </div>
         )}
       </div>
-    </div>
-  );
-}
-
-function Feature({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
-  return (
-    <div className="rounded-lg border bg-card/50 px-3 py-2">
-      <div className="flex items-center gap-1.5 text-foreground/80">
-        {icon}
-        <span className="text-[11px] font-medium">{label}</span>
-      </div>
-      <div className="mt-0.5 text-[10px] text-muted-foreground">{value}</div>
     </div>
   );
 }

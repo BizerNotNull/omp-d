@@ -10,7 +10,7 @@ export interface ChangedFile {
   additions: number | null;
   deletions: number | null;
 }
-export type InspectorSelection = { kind: "tasks" | "context" | "changes" } | { kind: "agent"; id: string } | { kind: "diff"; path: string };
+export type InspectorSelection = { kind: "tasks" | "changes" } | { kind: "agent"; id: string } | { kind: "diff"; path: string };
 
 export function useInspectorData() {
   const session = useAppStore((state) => state.session);

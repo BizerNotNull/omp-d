@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { Check, ChevronRight, Circle, CircleAlert, CircleDot, LoaderCircle, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatTokens } from "@/lib/omp/format";
+import { formatCost, formatTokens } from "@/lib/omp/format";
 import type { ChangedFile, InspectorData, InspectorSelection } from "@/lib/omp/inspector-data";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 export function InspectorStatus({ status }: { status: string }) {
   if (status === "running" || status === "in_progress") return <LoaderCircle aria-label="Running" className="size-3.5 shrink-0 animate-spin text-amber-600 dark:text-amber-400 motion-reduce:animate-none" />;
@@ -62,12 +63,26 @@ export function RightPanel({ data, onInspect, onClose }: { data: InspectorData; 
         </section>}
         {data.gitError && <button type="button" onClick={() => onInspect({ kind: "changes" })} className="my-3 flex items-center gap-2 px-1 text-left text-[11px] text-destructive"><CircleAlert className="size-3.5" />Cannot read Git changes<ChevronRight className="size-3" /></button>}
       </div>
-      {(usage || data.stats) && <button type="button" onClick={() => onInspect({ kind: "context" })} className="shrink-0 border-t px-4 py-3 text-left hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-        <span className="flex items-center justify-between text-[11px]"><span className="text-muted-foreground">Context</span><span className="tabular-nums">{usage ? `${Math.max(0, 100 - usage.percent).toFixed(0)}% left` : `${formatTokens(data.stats?.tokens.total)} tokens`}<ChevronRight className="ml-1 inline size-3 text-muted-foreground" /></span></span>
-        {usage && <span role="progressbar" aria-label="Context used" aria-valuenow={Math.round(usage.percent)} aria-valuemin={0} aria-valuemax={100} className="mt-2 block h-1 overflow-hidden rounded-full bg-border"><span className={cn("block h-full rounded-full", usage.percent >= 90 ? "bg-destructive" : usage.percent >= 75 ? "bg-amber-600 dark:bg-amber-400" : "bg-muted-foreground/50")} style={{ width: `${Math.max(0, Math.min(100, usage.percent))}%` }} /></span>}
-      </button>}
+      {(usage || data.stats) && <Tooltip>
+        <TooltipTrigger render={<div tabIndex={0} aria-label="Context resources" />} className="shrink-0 border-t px-4 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+          <span className="flex items-center justify-between text-[11px]"><span className="text-muted-foreground">Context</span><span className="tabular-nums">{usage ? `${Math.max(0, 100 - usage.percent).toFixed(0)}% left` : `${formatTokens(data.stats?.tokens.total)} tokens`}</span></span>
+          {usage && <span role="progressbar" aria-label="Context used" aria-valuenow={Math.round(usage.percent)} aria-valuemin={0} aria-valuemax={100} className="mt-2 block h-1 overflow-hidden rounded-full bg-border"><span className={cn("block h-full rounded-full", usage.percent >= 90 ? "bg-destructive" : usage.percent >= 75 ? "bg-amber-600 dark:bg-amber-400" : "bg-muted-foreground/50")} style={{ width: `${Math.max(0, Math.min(100, usage.percent))}%` }} /></span>}
+        </TooltipTrigger>
+        <TooltipContent side="top" align="end" sideOffset={8} className="block w-80 max-w-[calc(100vw-2rem)] px-4 py-3">
+          <p className="mb-2 font-medium">Resources</p>
+          <dl className="space-y-2">
+            {usage && <><Resource label="Context used" value={`${formatTokens(usage.tokens)} / ${formatTokens(usage.contextWindow)} tokens (${usage.percent.toFixed(1)}%)`} /><Resource label="Context remaining" value={`${formatTokens(Math.max(0, usage.contextWindow - usage.tokens))} tokens`} /></>}
+            {data.stats && <><Resource label="Input tokens" value={formatTokens(data.stats.tokens.input)} /><Resource label="Output tokens" value={formatTokens(data.stats.tokens.output)} /><Resource label="Reasoning tokens" value={formatTokens(data.stats.tokens.reasoning)} /><Resource label="Cache read / write" value={`${formatTokens(data.stats.tokens.cacheRead)} / ${formatTokens(data.stats.tokens.cacheWrite)}`} /><Resource label="Estimated cost" value={formatCost(data.stats.cost)} /></>}
+            {session?.autoCompactionEnabled && <Resource label="Auto compaction" value="Enabled" />}
+          </dl>
+        </TooltipContent>
+      </Tooltip>}
     </aside>
   );
+}
+
+function Resource({ label, value }: { label: string; value: string }) {
+  return <div className="flex flex-wrap justify-between gap-x-3 gap-y-1"><dt className="opacity-70">{label}</dt><dd className="tabular-nums">{value}</dd></div>;
 }
 
 function AgentRow({ name, status, activity, snapshot, onClick }: { name: string; status: string; activity?: string; snapshot?: boolean; onClick: () => void }) {

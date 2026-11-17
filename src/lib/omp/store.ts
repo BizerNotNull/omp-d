@@ -449,7 +449,7 @@ const runtime = create<AppState>()((set, get) => ({
   openProjectDialog: async () => {
     const selected = await openDialog({ directory: true, multiple: false, title: "Open a project folder" });
     if (typeof selected === "string" && selected) {
-      await openRuntime(selected);
+      await useSessionNavigation.getState().selectProject(selected);
     }
   },
 
@@ -606,6 +606,11 @@ const runtime = create<AppState>()((set, get) => ({
       const gitStatus = await invoke<GitStatus | null>("git_status", { cwd });
       if (ticket === connectTicket && get().cwd === cwd && get().status === "ready") {
         set({ gitStatus, gitStatusError: undefined });
+        if (activeRuntime === runtime) {
+          const navigation = useSessionNavigation.getState();
+          const directory = navigation.sessionListing?.directories.find((item) => sessionPathKey(item.cwd) === sessionPathKey(cwd));
+          if (directory && directory.branch !== (gitStatus?.branch ?? null)) void navigation.refresh();
+        }
       }
     } catch (error) {
       if (ticket === connectTicket && get().cwd === cwd && get().status === "ready") {

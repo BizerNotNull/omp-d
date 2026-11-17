@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@/lib/diagnostics";
 import { ArrowLeft, LoaderCircle } from "lucide-react";
 import type { InspectorData, InspectorSelection } from "@/lib/omp/inspector-data";
-import { contentText, formatCost, formatTokens, stripAnsi } from "@/lib/omp/format";
+import { contentText, stripAnsi } from "@/lib/omp/format";
 import { cn } from "@/lib/utils";
 import { FileChangeRow, InspectorStatus } from "./RightPanel";
 import { ToolCard } from "./ToolCard";
@@ -20,8 +20,7 @@ export function InspectorDetail({ selection, data, onSelect, onClose }: { select
     const timer = window.setInterval(() => void refreshAgent(agentId), 2000);
     return () => window.clearInterval(timer);
   }, [agentId, agentStatus, refreshAgent]);
-  const title = selection.kind === "tasks" ? "Task progress" : selection.kind === "context" ? "Resources" : selection.kind === "diff" ? selection.path : selection.kind === "changes" ? "Changes" : agent?.name ?? (selection.kind === "agent" && selection.id === "main" ? "Main agent" : "Agents");
-  const usage = data.session?.contextUsage;
+  const title = selection.kind === "tasks" ? "Task progress" : selection.kind === "diff" ? selection.path : selection.kind === "changes" ? "Changes" : agent?.name ?? (selection.kind === "agent" && selection.id === "main" ? "Main agent" : "Agents");
   const files = scope === "session" ? data.sessionFiles : data.files;
   const mainOutput = data.runs.length === 0 ? data.activity : undefined;
   return <section aria-label={title} className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -37,11 +36,6 @@ export function InspectorDetail({ selection, data, onSelect, onClose }: { select
         {data.gitError ? <p role="alert" className="text-sm text-destructive">{data.gitError}</p> : files ? files.length ? files.map((file) => <FileChangeRow key={file.path} file={file} onClick={() => onSelect({ kind: "diff", path: file.path })} />) : <p className="text-sm text-muted-foreground">{scope === "session" ? "No modified files from recorded session edits." : "Working tree is clean."}</p> : <p className="text-sm text-muted-foreground">Git changes are unavailable for this workspace.</p>}
       </div>}
       {selection.kind === "diff" && data.cwd && <FileDiff key={`${data.cwd}:${selection.path}`} cwd={data.cwd} path={selection.path} />}
-      {selection.kind === "context" && <dl className="mx-auto max-w-xl divide-y text-sm">
-        {usage && <><Resource label="Context used" value={`${formatTokens(usage.tokens)} / ${formatTokens(usage.contextWindow)} tokens (${usage.percent.toFixed(1)}%)`} /><Resource label="Context remaining" value={`${formatTokens(Math.max(0, usage.contextWindow - usage.tokens))} tokens`} /></>}
-        {data.stats && <><Resource label="Input tokens" value={formatTokens(data.stats.tokens.input)} /><Resource label="Output tokens" value={formatTokens(data.stats.tokens.output)} /><Resource label="Reasoning tokens" value={formatTokens(data.stats.tokens.reasoning)} /><Resource label="Cache read / write" value={`${formatTokens(data.stats.tokens.cacheRead)} / ${formatTokens(data.stats.tokens.cacheWrite)}`} /><Resource label="Estimated cost" value={formatCost(data.stats.cost)} /></>}
-        {data.session?.autoCompactionEnabled && <Resource label="Auto compaction" value="Enabled" />}
-      </dl>}
       {selection.kind === "agent" && <div className="mx-auto max-w-3xl space-y-4">
         {selection.id === "all" ? data.agents.map((item) => <button type="button" key={item.id} onClick={() => onSelect({ kind: "agent", id: item.id })} className="flex w-full items-center gap-3 border-b py-3 text-left text-sm hover:bg-muted"><InspectorStatus status={item.status} /><span>{item.name}</span><span className="min-w-0 truncate text-muted-foreground">{item.activity}</span></button>) : <>
           <p className="flex items-center gap-2 text-sm"><InspectorStatus status={agent?.snapshot ? "snapshot" : agent?.status ?? data.mainState} />{agent?.activity ?? data.activity}</p>
@@ -61,9 +55,6 @@ export function InspectorDetail({ selection, data, onSelect, onClose }: { select
   </section>;
 }
 
-function Resource({ label, value }: { label: string; value: string }) {
-  return <div className="flex flex-wrap justify-between gap-3 py-3"><dt className="text-muted-foreground">{label}</dt><dd className="tabular-nums">{value}</dd></div>;
-}
 
 function FileDiff({ cwd, path }: { cwd: string; path: string }) {
   const [result, setResult] = useState<{ text?: string; error?: string }>();

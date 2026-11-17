@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Archive, Brain, ChevronDown, ChevronLeft, ChevronRight, LoaderCircle, Pencil, Scissors, Sparkles, SquareTerminal, User } from "lucide-react";
+import { Archive, ArrowUpRight, Brain, ChevronDown, ChevronLeft, ChevronRight, Lightbulb, LoaderCircle, Pencil, Scissors, Sparkles, SquareTerminal, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import type { MessageBranch } from "@/lib/omp/branches";
@@ -390,38 +390,62 @@ function SystemNote({ message }: { message: AgentMessage }) {
   return null;
 }
 
+// Adapted from oh-my-pi/packages/tui/src/prompt/tips.txt; omit TUI-only controls.
+const welcomeTips = [
+  <>Type <code className="font-mono text-foreground">/</code> at the start of your prompt to browse commands.</>,
+  <>Add <code className="font-mono text-foreground">ultrathink</code> for harder multi-step reasoning.</>,
+  <>Say <code className="font-mono text-foreground">chillax</code> to lower thinking effort on supported models.</>,
+  <>Say <code className="font-mono text-foreground">orchestrate</code> for a multi-phase task with parallel subagents.</>,
+  <>Classifying a large batch? Ask for <code className="font-mono text-foreground">jevify</code>.</>,
+  <>Oh My Pi can extend itself — ask it to add the tools you need.</>,
+];
+
 export function TranscriptEmpty() {
+  const [tipIndex, setTipIndex] = useState(() => Math.floor(Math.random() * welcomeTips.length));
   return (
-    <div className="grid-bg relative flex min-h-[50vh] flex-col items-center justify-center rounded-2xl border border-dashed border-border/60 p-10">
-      <div className="relative z-10 max-w-md text-center">
-        <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-2xl border border-border bg-card text-xl font-semibold shadow-sm">
-          π
+    <section aria-label="New conversation" className="flex min-h-[50vh] flex-col items-center justify-center px-2 py-10 sm:px-6">
+      <div className="w-full max-w-md">
+        <div className="mb-8 flex items-center justify-center gap-3">
+          <span aria-hidden="true" className="font-serif text-5xl leading-none">π</span>
+          <h2 className="text-xl font-medium tracking-tight">Oh My Pi</h2>
         </div>
-        <h2 className="text-lg font-medium tracking-tight">Oh My Pi, with a window</h2>
-        <p className="mt-1.5 text-sm text-muted-foreground">
-          The same agent runtime as <span className="font-mono text-xs">omp</span> — sessions, tools, todos and
-          background work stay on disk.
-        </p>
-        <div className="mt-5 grid gap-2 text-left text-xs text-muted-foreground">
-          <Suggestion text="Explain this repository and its architecture" />
-          <Suggestion text="Find a bug and fix it, then run the tests" />
-          <Suggestion text="Review my uncommitted changes" />
+        <div className="flex flex-wrap justify-center gap-2">
+          <Suggestion label="Explore repo" text="Explain this repository and its architecture" />
+          <Suggestion label="Fix a bug" text="Find a bug and fix it, then run the tests" />
+          <Suggestion label="Review changes" text="Review my uncommitted changes" />
+        </div>
+        <div className="mt-10 border-t pt-4">
+          <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+            <Lightbulb aria-hidden="true" className="size-3.5" />
+            <span className="font-medium">Tip</span>
+            <div className="ml-auto flex gap-1">
+              <Button variant="ghost" size="icon-sm" aria-label="Previous tip" onClick={() => setTipIndex((index) => (index + welcomeTips.length - 1) % welcomeTips.length)}>
+                <ChevronLeft aria-hidden="true" className="size-3.5" />
+              </Button>
+              <Button variant="ghost" size="icon-sm" aria-label="Next tip" onClick={() => setTipIndex((index) => (index + 1) % welcomeTips.length)}>
+                <ChevronRight aria-hidden="true" className="size-3.5" />
+              </Button>
+            </div>
+          </div>
+          <p aria-live="polite" aria-atomic="true" className="min-h-12 text-sm leading-6 text-muted-foreground">
+            {welcomeTips[tipIndex]}
+          </p>
         </div>
       </div>
-    </div>
+    </section>
   );
 }
 
-function Suggestion({ text }: { text: string }) {
+function Suggestion({ label, text }: { label: string; text: string }) {
   const setEditorText = useAppStore((state) => state.setEditorText);
   return (
     <button
       type="button"
       onClick={() => setEditorText(text)}
-      className="group flex items-center gap-2 rounded-lg border bg-card/60 px-3 py-2 text-left transition-colors hover:border-border hover:bg-card"
+      className="group flex items-center gap-2 rounded-full border px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
-      <Sparkles className="size-3.5 text-muted-foreground group-hover:text-foreground" />
-      <span>{text}</span>
+      <span>{label}</span>
+      <ArrowUpRight aria-hidden="true" className="size-3" />
     </button>
   );
 }

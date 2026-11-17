@@ -1,7 +1,7 @@
 import { Activity, CircleAlert, CircleDot, Flame, ListChecks, Terminal, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore, activeTodos } from "@/lib/omp/store";
-import { formatCost, formatTokens } from "@/lib/omp/format";
+import { formatCost } from "@/lib/omp/format";
 
 export function StatusBar({ terminalOpen, onToggleTerminal }: { terminalOpen: boolean; onToggleTerminal: () => void }) {
   const status = useAppStore((state) => state.status);
@@ -10,8 +10,6 @@ export function StatusBar({ terminalOpen, onToggleTerminal }: { terminalOpen: bo
   const stats = useAppStore((state) => state.stats);
   const startInfo = useAppStore((state) => state.startInfo);
   const todos = activeTodos(session?.todoPhases);
-  const usage = session?.contextUsage;
-  const percent = Math.max(0, Math.min(100, usage?.percent ?? 0));
   const limit = session?.usageLimit;
 
   return (
@@ -25,20 +23,6 @@ export function StatusBar({ terminalOpen, onToggleTerminal }: { terminalOpen: bo
         />
         {status === "ready" ? (busy ? "working" : "ready") : status}
       </span>
-
-      {usage && (
-        <span className="flex items-center gap-2" title={`${formatTokens(usage.tokens)} of ${formatTokens(usage.contextWindow)} tokens`}>
-          <span className="h-1.5 w-16 overflow-hidden rounded-full bg-border/80">
-            <span
-              className={cn("block h-full rounded-full", percent > 85 ? "bg-destructive" : percent > 60 ? "bg-amber-500" : "bg-emerald-500/80")}
-              style={{ width: `${percent}%` }}
-            />
-          </span>
-          <span>
-            {formatTokens(usage.tokens)} / {formatTokens(usage.contextWindow)}
-          </span>
-        </span>
-      )}
 
       {session?.tokensPerSecond ? (
         <span className="flex items-center gap-1">

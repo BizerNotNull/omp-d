@@ -2,11 +2,14 @@
 
 ## Unreleased
 
+### Changed
+- The sidebar separates projects, Worktrees, and sessions. A searchable recent-project picker remembers repository roots across restarts, restores each project's last Worktree and session, and keeps other runtimes open. Project and session searches are separate; unavailable folders report an error without replacing the current project
+- Context resources now appear on hover or keyboard focus in the right sidebar; clicking no longer opens a separate page. Duplicate context indicators below the composer and in the bottom status bar have been removed
+- Empty conversations use a plain background, compact prompt shortcuts, and browsable tips adapted from Oh My Pi. Startup screens no longer show the grid or runtime introduction
+
 ### Fixed
-- Git status, changed files, and diff validation share a one-second, per-directory snapshot and concurrent scans. Tracked paths and line counts use one Git diff; repository discovery runs alongside status, and untracked counts use at most four Git processes instead of a serial loop
-- Session lists reuse unchanged file summaries and repeated full-text search results in a bounded memory cache. Full-text scanning processes ASCII in buffered runs. Concurrent Worktree discovery is shared and reused for two seconds; file additions, changes, and deletions are checked on every query
-- Model catalogs now share concurrent queries across sessions and reuse a five-minute persistent cache. Expired catalogs remain usable during background refresh; model and role loading and errors are independent
-- “View all changes” now expands the full file list in the right sidebar instead of navigating away from the conversation
+- Worktree branch labels now refresh when Git status detects a branch switch in the active workspace, including switches made outside the app
+- Resource tooltips and their arrows now use the active theme's popover colors instead of inverted foreground/background colors
 ## 0.1.0 — 2026-11-06
 
 Initial desktop client for Oh My Pi.

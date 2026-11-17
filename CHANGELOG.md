@@ -2,8 +2,12 @@
 
 ## Unreleased
 
+### Added
+- Startup diagnostics record process spawn, readiness, session restore, hydration, and total duration
+
 ### Changed
-- Magic prompt keywords (`ultrathink`, `chillax`, `orchestrate`, `workflowz`, `jevify`) now show omp-style gradients in the composer, message editor, and sent messages. Focused inputs shimmer unless reduced motion is enabled; code and XML/HTML regions are excluded. Prompts are sent unchanged for omp to process
+- New sessions use one background-prewarmed omp process when available; startup configuration changes retire stale spares
+- The composer accepts drafts and pasted images while omp starts; sending waits for readiness
 ## 0.1.0 — 2026-11-06
 
 Initial desktop client for Oh My Pi.

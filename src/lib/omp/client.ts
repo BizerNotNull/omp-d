@@ -5,7 +5,7 @@
  * correlation, protocol negotiation and the ready/process lifecycle.
  */
 
-import { invoke, reportRpcCompletion } from "@/lib/diagnostics";
+import { invoke, reportRpcCompletion, reportStartupPhase } from "@/lib/diagnostics";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   ExtensionUIResponse,
@@ -235,7 +235,9 @@ export class OmpClient {
       this.activeSeq = seq;
       this.starting = true;
       try {
+        const spawnStarted = performance.now();
         const info = await invoke<StartInfo>("start_agent", { options });
+        reportStartupPhase("spawn", spawnStarted);
         this.generation = info.generation;
         this.startInfo = info;
         if (seq !== this.startSeq) throw new Error("Agent start superseded");
@@ -244,7 +246,9 @@ export class OmpClient {
         this.earlyEvents = [];
         for (const event of earlyEvents) this.receive(event);
         if (seq !== this.startSeq) throw new Error("Agent start superseded");
+        const readyStarted = performance.now();
         await this.waitForReady(info.generation);
+        reportStartupPhase("ready", readyStarted);
         if (seq !== this.startSeq) throw new Error("Agent start superseded");
         return info;
       } catch (error) {

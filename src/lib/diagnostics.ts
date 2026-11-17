@@ -64,6 +64,15 @@ export function reportRpcCompletion(started: number, success: boolean): void {
   });
 }
 
+export function reportStartupPhase(
+  phase: "spawn" | "ready" | "restore" | "hydrate" | "total",
+  started: number,
+): number {
+  const durationMs = performance.now() - started;
+  reportFrontend({ kind: "ipc", command: `startup_${phase}`, durationMs, success: true });
+  return durationMs;
+}
+
 /** Drop-in core invoke API; arguments, values and rejection identities survive. */
 export async function invoke<T>(cmd: string, args?: InvokeArgs, options?: InvokeOptions): Promise<T> {
   if (cmd === "report_frontend") return nativeInvoke<T>(cmd, args, options);

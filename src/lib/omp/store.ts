@@ -1,4 +1,4 @@
-import { invoke } from "@/lib/diagnostics";
+import { invoke, reportStartupPhase } from "@/lib/diagnostics";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { create, type StoreApi, type UseBoundStore } from "zustand";
@@ -216,6 +216,7 @@ let toastSeq = 0;
 let noticeSeq = 0;
 let initialized = false;
 const runtimeModifiedTimes = new Map<number, number>();
+const runtimeDisposers = new WeakMap<RuntimeStore, () => Promise<void>>();
 function createRuntimeStore(id: number, initialSessionPath?: string) {
 const omp = new OmpClient();
 let connectTicket = 0;
@@ -346,6 +347,11 @@ const runtime = create<AppState>()((set, get) => ({
 
   connect: async (cwd, prefs) => {
     const ticket = ++connectTicket;
+    const started = performance.now();
+    const recordPhase = (phase: "restore" | "hydrate" | "total", since: number) => {
+      const duration = reportStartupPhase(phase, since);
+      set((state) => ({ diagnostics: [...state.diagnostics.slice(-199), `startup_${phase}: ${duration.toFixed(1)} ms`] }));
+    };
     ++conversationRevision;
     subagentRefresh = undefined;
     subagentSubscriptionGeneration = undefined;
@@ -396,15 +402,23 @@ const runtime = create<AppState>()((set, get) => ({
       set({ startInfo: info, cwd: info.cwd });
       void get().fetchModels();
       await omp.send({ type: "set_ask_dialog", enabled: true }).catch(() => {});
+      if (ticket !== connectTicket) return;
       if (initialSessionPath) {
+        const restoreStarted = performance.now();
         const response = await omp.send<{ cancelled: boolean }>({ type: "switch_session", sessionPath: initialSessionPath });
+        if (ticket !== connectTicket) return;
         if (response.data?.cancelled) throw new Error("Session switch was cancelled.");
         initialSessionPath = undefined;
+        recordPhase("restore", restoreStarted);
       }
       set({ status: "ready" });
+      const hydrateStarted = performance.now();
       await get().refreshAll();
       if (ticket !== connectTicket) return;
       await get().loadSessions();
+      if (ticket !== connectTicket) return;
+      recordPhase("hydrate", hydrateStarted);
+      recordPhase("total", started);
     } catch (error) {
       if (ticket !== connectTicket) return;
       set({ status: "error", error: describeError(error), sessionsLoading: false });
@@ -421,6 +435,8 @@ const runtime = create<AppState>()((set, get) => ({
 
   disconnect: async () => {
     ++connectTicket;
+    set({ status: "stopped" });
+    if (activeRuntime === runtime) discardSpare();
     catalogSubscription?.();
     subscribedCatalogKey = undefined;
     await omp.stop();
@@ -685,7 +701,7 @@ const runtime = create<AppState>()((set, get) => ({
 
   prompt: async (text, images, behavior) => {
     const trimmed = text.trim();
-    if (get().branching) return false;
+    if (get().status !== "ready" || get().branching) return false;
     if (!trimmed) return false;
     const shouldTitle = !get().session?.sessionName && (get().session?.messageCount ?? 0) === 0 && !trimmed.startsWith("/");
     // Goal lifecycle commands must not mark an idle session as streaming.
@@ -803,8 +819,7 @@ const runtime = create<AppState>()((set, get) => ({
     const cwd = targetCwd ?? state.cwd ?? navigation.recentWorktrees[0] ?? navigation.repositoryCwd;
     if (!cwd || state.branching) return;
     const draft = state.messages.length === 0 ? { draftText: state.draftText, draftImages: state.draftImages } : undefined;
-    const created = await openRuntime(cwd);
-    if (draft) created.setState(draft);
+    await openRuntime(cwd, undefined, draft);
   },
 
   switchSession: async (path, targetCwd) => {
@@ -1345,6 +1360,13 @@ function setTitle(title: string) {
 }
 
 omp.on((event) => runtime.getState().handleEvent(event));
+runtimeDisposers.set(runtime, async () => {
+  ++connectTicket;
+  catalogSubscription?.();
+  subscribedCatalogKey = undefined;
+  await omp.dispose();
+  runtimeModifiedTimes.delete(id);
+});
 return runtime;
 }
 
@@ -1353,6 +1375,58 @@ const runtimes = new Map<number, { store: RuntimeStore; path?: string }>();
 let runtimeSequence = 0;
 let activeRuntime = createRuntimeStore(++runtimeSequence);
 runtimes.set(runtimeSequence, { store: activeRuntime });
+
+type SpareRuntime = { store: RuntimeStore; key: string; ready: boolean };
+let spareRuntime: SpareRuntime | undefined;
+let spareCleanup: Promise<void> = Promise.resolve();
+let failedSpareKey: string | undefined;
+
+function startupKey(cwd: string, preferences: Preferences): string {
+  return JSON.stringify([sessionPathKey(cwd), preferences.binary.trim() || "omp",
+    splitExtraArgs(preferences.extraArgs), preferences.model.trim()]);
+}
+
+function discardSpare() {
+  const spare = spareRuntime;
+  spareRuntime = undefined;
+  if (!spare) return;
+  failedSpareKey = undefined;
+  const stopping = runtimeDisposers.get(spare.store)!();
+  spareCleanup = Promise.all([spareCleanup, stopping]).then(() => {}, () => {});
+}
+
+function prewarmRuntime(cwd: string, preferences: Preferences) {
+  const key = startupKey(cwd, preferences);
+  if (spareRuntime?.key === key) {
+    const state = spareRuntime.store.getState();
+    if (!spareRuntime.ready || (state.status === "ready" && !hasSessionActivity(state) && !state.dialogs.length)) return;
+  }
+  if (failedSpareKey === key) return;
+  discardSpare();
+  const store = createRuntimeStore(++runtimeSequence);
+  store.setState({ preferences });
+  const spare: SpareRuntime = { store, key, ready: false };
+  spareRuntime = spare;
+  // Never delay a submission; retirement completes before another child starts.
+  void spareCleanup.then(async () => {
+    if (spareRuntime !== spare) return;
+    await store.getState().connect(cwd);
+    if (spareRuntime !== spare) return;
+    const state = store.getState();
+    if (state.status !== "ready" || hasSessionActivity(state) || state.dialogs.length) {
+      discardSpare();
+      failedSpareKey = key;
+      return;
+    }
+    spare.ready = true;
+  }).catch(() => {
+    if (spareRuntime !== spare) return;
+    discardSpare();
+    failedSpareKey = key;
+  });
+}
+
+if (import.meta.hot) import.meta.hot.dispose(discardSpare);
 
 // React subscribes to a stable facade. Async actions retain their originating
 // store/client, so completion in a hidden session never mutates the selected one.
@@ -1406,6 +1480,12 @@ function publishRuntimes() {
     sessionListing: navigation.sessionListing, sessionsLoading: navigation.sessionsLoading }, true);
   const active = activeRuntime.getState();
   if (active.cwd) {
+    const key = startupKey(active.cwd, active.preferences);
+    if (spareRuntime && spareRuntime.key !== key) discardSpare();
+    if (failedSpareKey && failedSpareKey !== key) failedSpareKey = undefined;
+    if (hasSessionActivity(active) && active.status === "ready") prewarmRuntime(active.cwd, active.preferences);
+  }
+  if (active.cwd) {
     const path = (hasSessionActivity(active) ? active.session?.sessionFile : undefined)
       ?? runtimes.get(active.activeRuntimeId)?.path;
     rememberActiveSession(active.cwd, path);
@@ -1430,30 +1510,39 @@ function selectRuntime(id: number) {
   void state.loadSessions();
 }
 
-async function openRuntime(cwd: string, path?: string) {
+async function openRuntime(cwd: string, path?: string, draft?: Pick<AppState, "draftText" | "draftImages">) {
   if (!path) {
     // An untouched composer is reused instead of spawning a second untracked runtime.
     const empty = [...runtimes.values()].find((entry) => !entry.path
-      && entry.store.getState().status === "ready"
+      && ["starting", "ready"].includes(entry.store.getState().status)
       && sessionPathKey(entry.store.getState().cwd) === sessionPathKey(cwd)
       && !hasSessionActivity(entry.store.getState()));
     if (empty) {
+      if (draft) empty.store.setState(draft);
       selectRuntime(empty.store.getState().activeRuntimeId);
       return empty.store;
     }
   }
   if (!path && !activeRuntime.getState().cwd && activeRuntime.getState().status === "idle") {
     const store = activeRuntime;
+    if (draft) store.setState(draft);
     await store.getState().connect(cwd);
     return store;
   }
-  const id = ++runtimeSequence;
-  const store = createRuntimeStore(id, path);
-  store.setState({ preferences: activeRuntime.getState().preferences });
+  const preferences = activeRuntime.getState().preferences;
+  const spare = !path && spareRuntime?.ready && spareRuntime.key === startupKey(cwd, preferences)
+    && spareRuntime.store.getState().status === "ready"
+    && !hasSessionActivity(spareRuntime.store.getState()) && !spareRuntime.store.getState().dialogs.length
+    ? spareRuntime : undefined;
+  if (spare) spareRuntime = undefined;
+  const id = spare?.store.getState().activeRuntimeId ?? ++runtimeSequence;
+  const store = spare?.store ?? createRuntimeStore(id, path);
+  store.setState({ preferences, ...draft });
   runtimes.set(id, { store, path });
   store.subscribe(publishRuntimes);
   selectRuntime(id);
-  await store.getState().connect(cwd);
+  if (!spare) await store.getState().connect(cwd);
+  if (activeRuntime === store && store.getState().status === "ready") prewarmRuntime(cwd, preferences);
   return store;
 }
 

@@ -50,7 +50,7 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
   const restart = useAppStore((state) => state.restart);
 
   useEffect(() => {
-    if (active && status === "ready") textareaRef.current?.focus();
+    if (active && (status === "ready" || status === "starting")) textareaRef.current?.focus();
   }, [active, status]);
 
   useEffect(() => {
@@ -190,25 +190,22 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
     }
   }
 
-  if (status !== "ready") {
+  if (status !== "ready" && status !== "starting") {
     return (
       <div className="sticky bottom-0 border-t bg-background/90 px-4 py-3 backdrop-blur">
         <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3 text-sm">
           <span className="text-muted-foreground">
-            {status === "starting"
-              ? "Starting omp…"
-              : status === "error"
-                ? useAppStore.getState().error ?? "The agent failed to start."
-                : status === "stopped"
-                  ? "The agent process is not running."
-                  : "Open a project to start a session."}
+            {status === "error"
+              ? useAppStore.getState().error ?? "The agent failed to start."
+              : status === "stopped"
+                ? "The agent process is not running."
+                : "Open a project to start a session."}
           </span>
           {(status === "stopped" || status === "error") && (
             <Button size="sm" onClick={() => void restart()}>
               Restart agent
             </Button>
           )}
-          {status === "starting" && <LoaderCircle className="size-4 animate-spin text-muted-foreground" />}
         </div>
       </div>
     );
@@ -307,7 +304,7 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
             />
             <div className="flex items-center gap-1.5 px-2 pb-2">
               <span className="pl-1.5 text-[10px] text-muted-foreground/70">
-                {busy ? "agent is working" : draft.startsWith("/") ? "slash command" : "Enter to send · Shift+Enter newline"}
+                {status === "starting" ? "Starting omp… You can write while it loads." : busy ? "agent is working" : draft.startsWith("/") ? "slash command" : "Enter to send · Shift+Enter newline"}
               </span>
               <div className="ml-auto flex items-center gap-1.5">
                 {images.length > 0 && (
@@ -333,7 +330,7 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
                   onClick={() => void submit(undefined)}
                   className="gap-1.5"
                 >
-                  {submitting ? <LoaderCircle className="size-3.5 animate-spin" /> : <ArrowUp className="size-3.5" />}
+                  {submitting || status === "starting" ? <LoaderCircle className="size-3.5 animate-spin" /> : <ArrowUp className="size-3.5" />}
                   {busy ? "Steer" : "Send"}
                 </Button>
               </div>

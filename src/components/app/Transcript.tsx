@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Archive, ArrowUpRight, Brain, ChevronDown, ChevronLeft, ChevronRight, Lightbulb, LoaderCircle, Pencil, Scissors, Sparkles, SquareTerminal, User } from "lucide-react";
+import { Archive, ArrowUpRight, Brain, ChevronDown, ChevronLeft, ChevronRight, Lightbulb, LoaderCircle, Pencil, Scissors, Sparkles, SquareTerminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PromptText, PromptTextarea } from "./PromptText";
 import type { MessageBranch } from "@/lib/omp/branches";
@@ -83,7 +83,7 @@ function SessionTranscript({
     if (isToolResult(message)) {
       if (callIds.has(message.toolCallId)) return null;
       return (
-        <div key={key} className="pl-10">
+        <div key={key} className="min-w-0">
           <ToolCard result={message} run={toolRuns[message.toolCallId]} />
         </div>
       );
@@ -92,9 +92,9 @@ function SessionTranscript({
   });
 
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-2">
       {items}
-      {waitingForMessage && <div className="py-2 pl-10"><InferenceSpinner /></div>}
+      {waitingForMessage && <InferenceSpinner />}
     </div>
   );
 }
@@ -147,6 +147,7 @@ function UserBubble({ message, branch, disabled }: { message: AgentMessage; bran
   const images = imageBlocks(message.content);
   const agentAttributed = message.attribution === "agent";
   const editable = Boolean(branch) && message.role === "user" && !message.synthetic && !agentAttributed;
+  const canSwitchBranch = Boolean(branch && branch.alternatives.length > 1);
   const forkMessage = useAppStore((state) => state.forkMessage);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(text);
@@ -167,13 +168,13 @@ function UserBubble({ message, branch, disabled }: { message: AgentMessage; bran
     }
   }
   return (
-    <div className="anim-in group ml-auto flex w-fit max-w-[85%] flex-col items-end gap-1.5 py-1.5">
-      <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted-foreground/70">
-        {agentAttributed ? "agent" : "you"}
-        <User className="size-3" />
-      </div>
+    <article
+      aria-label={agentAttributed ? "Agent message" : "User message"}
+      className={cn("anim-in ml-auto flex min-w-0 max-w-full flex-col items-end gap-1 py-1 sm:max-w-[min(82%,48rem)]", editing ? "w-96" : "w-fit")}
+    >
+      {agentAttributed && <span className="text-[10px] font-medium text-muted-foreground">Agent</span>}
       {images.length > 0 && (
-        <div className="flex flex-wrap justify-end gap-2">
+        <div className="flex max-w-full flex-wrap justify-end gap-2">
           {images.map((image, index) => (
             <ContentImage key={index} image={image} alt="attachment" />
           ))}
@@ -188,7 +189,7 @@ function UserBubble({ message, branch, disabled }: { message: AgentMessage; bran
             onChange={(event) => setDraft(event.target.value)}
             disabled={disabled || saving}
             rows={3}
-            className="min-w-[min(24rem,65vw)] resize-y text-[13.5px]"
+            className="resize-y text-[13.5px]"
           />
           <div className="flex justify-end gap-2">
             <Button type="button" variant="ghost" size="sm" disabled={saving} onClick={() => setEditing(false)}>
@@ -200,31 +201,33 @@ function UserBubble({ message, branch, disabled }: { message: AgentMessage; bran
           </div>
         </div>
       ) : text ? (
-        <div className="rounded-2xl rounded-tr-md border border-border/70 bg-secondary/70 px-3.5 py-2.5 text-[13.5px] leading-relaxed text-secondary-foreground shadow-sm">
-          <div className="break-words whitespace-pre-wrap"><PromptText text={text} /></div>
+        <div className="max-w-full rounded-xl rounded-tr-sm bg-secondary px-3 py-2 text-[13.5px] leading-relaxed text-secondary-foreground">
+          <div className="wrap-anywhere whitespace-pre-wrap"><PromptText text={text} /></div>
         </div>
       ) : null}
-      <div className="flex items-center gap-1">
-        {editable && !editing && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            disabled={disabled || saving}
-            aria-label="Edit message and fork"
-            title="Edit message and fork"
-            className="text-muted-foreground"
-            onClick={() => {
-              setDraft(text);
-              setEditing(true);
-            }}
-          >
-            <Pencil className="size-3.5" />
-          </Button>
-        )}
-        {branch && <BranchControls branch={branch} disabled={disabled || saving} />}
-      </div>
-    </div>
+      {((editable && !editing) || canSwitchBranch) && (
+        <div className="flex items-center gap-1">
+          {editable && !editing && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              disabled={disabled || saving}
+              aria-label="Edit message and fork"
+              title="Edit message and fork"
+              className="text-muted-foreground"
+              onClick={() => {
+                setDraft(text);
+                setEditing(true);
+              }}
+            >
+              <Pencil className="size-3.5" />
+            </Button>
+          )}
+          {branch && <BranchControls branch={branch} disabled={disabled || saving} />}
+        </div>
+      )}
+    </article>
   );
 }
 
@@ -253,57 +256,54 @@ function AssistantBlock({
   const usage = message.usage;
   const error = typeof message.errorMessage === "string" ? message.errorMessage : undefined;
 
+  if (!hasVisible && !error && !streaming) return null;
+
   return (
-    <div className="anim-in flex gap-3 py-2">
-      <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg border border-border/80 bg-card text-[11px] font-semibold text-muted-foreground">
-        π
-      </div>
-      <div className="min-w-0 flex-1">
-        {!hasVisible && !error && streaming && <InferenceSpinner />}
+    <article aria-label="Assistant response" className="anim-in min-w-0 py-1.5">
+      {!hasVisible && !error && streaming && <InferenceSpinner />}
 
-        {blocks.map((block, index) => {
-          if (block.type === "text") {
-            const text = "text" in block && typeof block.text === "string" ? block.text : "";
-            if (!text) return null;
-            return <Markdown key={index} text={text} streaming={streaming} />;
-          }
-          if (block.type === "thinking") {
-            const thinking = block as ThinkingContent;
-            return <ThinkingBlock key={index} block={thinking} />;
-          }
-          if (block.type === "toolCall") {
-            const call = block as ToolCallContent;
-            return <ToolCard key={call.id ?? index} call={call} result={results.get(call.id)} run={toolRuns[call.id]} />;
-          }
-          const [image] = imageBlocks([block]);
-          if (image) {
-            return (
-              <ContentImage key={index} image={image} alt="assistant output" />
-            );
-          }
-          return null;
-        })}
+      {blocks.map((block, index) => {
+        if (block.type === "text") {
+          const text = "text" in block && typeof block.text === "string" ? block.text : "";
+          if (!text) return null;
+          return <Markdown key={index} text={text} className="transcript-markdown" streaming={streaming} />;
+        }
+        if (block.type === "thinking") {
+          const thinking = block as ThinkingContent;
+          return <ThinkingBlock key={index} block={thinking} />;
+        }
+        if (block.type === "toolCall") {
+          const call = block as ToolCallContent;
+          return <ToolCard key={call.id ?? index} call={call} result={results.get(call.id)} run={toolRuns[call.id]} />;
+        }
+        const [image] = imageBlocks([block]);
+        if (image) {
+          return (
+            <ContentImage key={index} image={image} alt="assistant output" />
+          );
+        }
+        return null;
+      })}
 
-        {error && (
-          <div className="mt-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-            {error}
-          </div>
-        )}
+      {error && (
+        <div className="mt-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {error}
+        </div>
+      )}
 
-        {hasProse && (message.model || usage) && (
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10.5px] text-muted-foreground/70">
-            <span>{message.model ?? "assistant"}</span>
-            {!streaming && typeof message.duration === "number" && (
-              <span>· {(message.duration / 1000).toFixed(1)}s</span>
-            )}
-            {!streaming && usage && <span>· {formatTokens(usage.totalTokens)} tok</span>}
-            {!streaming && usage?.cost?.total !== undefined && usage.cost.total > 0 && (
-              <span>· {formatCost(usage.cost.total)}</span>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
+      {hasProse && (message.model || usage) && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10.5px] text-muted-foreground">
+          <span>{message.model ?? "assistant"}</span>
+          {!streaming && typeof message.duration === "number" && (
+            <span>· {(message.duration / 1000).toFixed(1)}s</span>
+          )}
+          {!streaming && usage && <span>· {formatTokens(usage.totalTokens)} tok</span>}
+          {!streaming && usage?.cost?.total !== undefined && usage.cost.total > 0 && (
+            <span>· {formatCost(usage.cost.total)}</span>
+          )}
+        </div>
+      )}
+    </article>
   );
 }
 
@@ -352,7 +352,7 @@ function SystemNote({ message }: { message: AgentMessage }) {
 
   if (role === "bashExecution" || role === "pythonExecution") {
     return (
-      <div className="my-2 pl-10">
+      <div className="my-1 min-w-0">
         <div className="rounded-lg border bg-muted/30">
           <div className="flex items-center gap-2 border-b px-3 py-1.5 text-[11px] text-muted-foreground">
             <SquareTerminal className="size-3.5" /> {label}
@@ -376,7 +376,7 @@ function SystemNote({ message }: { message: AgentMessage }) {
   }
   if (role === "custom") {
     return (
-      <div className="my-2 pl-10">
+      <div className="my-1 min-w-0">
         <div className="rounded-lg border border-dashed bg-card/40 px-3 py-2">
           <div className="mb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
             <Sparkles className="size-3" /> {firstLine(label, 40)}

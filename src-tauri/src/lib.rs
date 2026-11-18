@@ -12,12 +12,18 @@ use agent::{AgentState, StartOptions};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 #[tauri::command]
+async fn attach_frontend(state: State<'_, AgentState>) -> Result<u64, String> {
+    agent::attach_frontend(&state).await
+}
+
+#[tauri::command]
 async fn start_agent(
     app: AppHandle,
     state: State<'_, AgentState>,
+    frontend: u64,
     options: StartOptions,
 ) -> Result<agent::StartInfo, String> {
-    agent::start(app, &state, options).await
+    agent::start(app, &state, frontend, options).await
 }
 
 #[tauri::command]
@@ -142,6 +148,7 @@ pub fn run() {
         })
         .invoke_handler({
             let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+                attach_frontend,
                 start_agent,
                 stop_agent,
                 rpc_send,

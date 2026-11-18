@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, FolderOpen, GitBranch, Pin, Search } from "lucide-react";
+import { Check, ChevronDown, FolderOpen, GitBranch, LoaderCircle, Pin, Search } from "lucide-react";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -19,6 +19,8 @@ export function WorktreeSelector({ value, onSelect, allowAll = true, className }
   className?: string;
 }) {
   const listing = useSessionNavigation((state) => state.sessionListing);
+  const loading = useSessionNavigation((state) => Boolean(state.switchingProject || state.switchingWorktree || (state.sessionsLoading && !state.sessionListing)));
+  const hydrating = useAppStore((state) => state.hydrating);
   const pinned = useSessionNavigation((state) => state.pinnedWorktrees);
   const recent = useSessionNavigation((state) => state.recentWorktrees);
   const togglePin = useSessionNavigation((state) => state.toggleWorktreePin);
@@ -60,13 +62,14 @@ export function WorktreeSelector({ value, onSelect, allowAll = true, className }
     listRef.current?.querySelector(`[data-option-index="${index}"]`)?.scrollIntoView({ block: "nearest" });
   }, [index]);
   const selected = directories.find((item) => sessionPathKey(item.cwd) === sessionPathKey(value));
-  const choose = (path: string) => { setOpen(false); onSelect(path); };
+  const disabled = loading || hydrating;
+  const choose = (path: string) => { if (!disabled) { setOpen(false); onSelect(path); } };
 
   return <>
-    <Popover open={open} onOpenChange={(next) => { setOpen(next); if (next) { setQuery(""); setIndex(0); } }}>
-      <PopoverTrigger render={<button type="button" className={cn("flex w-full min-w-0 items-center gap-2 rounded-lg border border-sidebar-border px-2.5 py-2 text-left text-[11px] hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", className)} aria-label={allowAll ? "Filter by Worktree" : "Choose task Worktree"} title={value} />}>
-        <GitBranch aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate">{value === "all" ? "All Worktrees" : worktreeName(value, selected?.branch)}</span>
+    <Popover open={open && !disabled} onOpenChange={(next) => { setOpen(next); if (next) { setQuery(""); setIndex(0); } }}>
+      <PopoverTrigger disabled={disabled} render={<button type="button" className={cn("flex w-full min-w-0 items-center gap-2 rounded-lg border border-sidebar-border px-2.5 py-2 text-left text-[11px] hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60", className)} aria-label={allowAll ? "Filter by Worktree" : "Choose task Worktree"} title={loading ? undefined : value} />}>
+        {loading ? <LoaderCircle aria-hidden="true" className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" /> : <GitBranch aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />}
+        <span className="min-w-0 flex-1 truncate">{loading ? "Loading Worktrees…" : value === "all" ? "All Worktrees" : worktreeName(value, selected?.branch)}</span>
         <ChevronDown aria-hidden="true" className="size-3 shrink-0 text-muted-foreground" />
       </PopoverTrigger>
       <PopoverContent align="start" className="w-72 max-w-[calc(100vw-24px)] gap-2">
@@ -93,7 +96,7 @@ export function WorktreeSelector({ value, onSelect, allowAll = true, className }
         <button type="button" className="border-t px-2 pt-2 text-left text-xs text-muted-foreground hover:text-foreground" onClick={() => { setOpen(false); setManage(true); }}>Manage Worktrees…</button>
       </PopoverContent>
     </Popover>
-    <Dialog open={manage} onOpenChange={setManage}>
+    <Dialog open={manage && !disabled} onOpenChange={setManage}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader><DialogTitle>Manage Worktrees</DialogTitle><DialogDescription>Pin execution environments for quick access, or open a Worktree’s last session.</DialogDescription></DialogHeader>
         <div className="max-h-80 space-y-1 overflow-y-auto">

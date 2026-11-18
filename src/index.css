@@ -254,6 +254,15 @@ body,
   .magic-keyword { background: none; color: inherit; -webkit-text-fill-color: currentColor; }
 }
 
+.conversation-lane {
+  width: min(80rem, calc(100cqi - 2 * clamp(1rem, 2.5cqi, 2rem)));
+  margin-inline: auto;
+}
+
+.transcript-markdown > :where(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) {
+  max-width: 60rem;
+}
+
 /* --------------------------------------------------------------- markdown */
 
 .chat-markdown {

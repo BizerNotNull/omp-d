@@ -203,8 +203,8 @@ export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, active }: 
 
   if (status !== "ready" && status !== "starting") {
     return (
-      <div className="sticky bottom-0 border-t bg-background/90 px-4 py-3 backdrop-blur">
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3 text-sm">
+      <div className="border-t bg-background/90 py-3 backdrop-blur">
+        <div className="conversation-lane flex items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3 text-sm">
           <span className="text-muted-foreground">
             {status === "error"
               ? useAppStore.getState().error ?? "The agent failed to start."
@@ -223,8 +223,8 @@ export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, active }: 
   }
 
   return (
-    <div className="sticky bottom-0 z-10 bg-gradient-to-t from-background via-background to-background/0 px-4 pt-6 pb-3">
-      <div className="mx-auto max-w-3xl">
+    <div className="z-10 bg-background pt-2 pb-3">
+      <div className="conversation-lane">
         {(queue.steering.length > 0 || queue.followUp.length > 0) && (
           <div className="mb-2 flex flex-wrap gap-1.5">
             {queue.steering.map((message, index) => (

@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from "react";
+import { LoaderCircle } from "lucide-react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
@@ -15,6 +16,7 @@ import { SettingsDialog } from "./SettingsDialog";
 import { catalogCacheKey, invalidateCatalog, splitExtraArgs } from "@/lib/omp/model-catalog";
 import { usePlanUsage } from "@/lib/omp/plan-usage";
 import { useAppStore } from "@/lib/omp/store";
+import { useSessionNavigation } from "@/lib/omp/navigation";
 import { InspectorDetail } from "./InspectorDetail";
 import { useInspectorData, type InspectorSelection } from "@/lib/omp/inspector-data";
 
@@ -24,6 +26,10 @@ export function AppShell() {
   const bootstrap = useAppStore((state) => state.bootstrap);
   const cwd = useAppStore((state) => state.cwd);
   const activeRuntimeId = useAppStore((state) => state.activeRuntimeId);
+  const hydrating = useAppStore((state) => state.hydrating);
+  const branching = useAppStore((state) => state.branching);
+  const switchingWorkspace = useSessionNavigation((state) => Boolean(state.switchingProject || state.switchingWorktree));
+  const conversationLoading = switchingWorkspace || hydrating || branching;
   const theme = useAppStore((state) => state.preferences.theme);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [modelsOpen, setModelsOpen] = useState(false);
@@ -46,6 +52,7 @@ export function AppShell() {
 
   function toggleTerminal() {
     if (!cwd) return;
+    if (conversationLoading) return;
     setTerminalWorkspace(cwd);
     setTerminalOpen(!terminalVisible);
   }
@@ -66,7 +73,7 @@ export function AppShell() {
         setSettingsOpen(true);
       } else if ((event.ctrlKey || event.metaKey) && event.code === "Backquote" && !event.altKey) {
         event.preventDefault();
-        if (cwd) {
+        if (cwd && !conversationLoading) {
           setTerminalWorkspace(cwd);
           setTerminalOpen((open) => terminalWorkspace !== cwd || !open);
         }
@@ -74,7 +81,7 @@ export function AppShell() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [cwd, terminalWorkspace]);
+  }, [cwd, terminalWorkspace, conversationLoading]);
 
   function closePanel() {
     setUsageOpen(false);
@@ -117,7 +124,7 @@ export function AppShell() {
         <div className="relative flex min-h-0 flex-1">
           {!modelsOpen && <Sidebar />}
           <main className="relative flex min-w-0 flex-1 flex-col">
-            {!modelsOpen && (
+            {!modelsOpen && !conversationLoading && (
               <TopBar
                 onOpenModels={openModels}
                 onOpenSettings={() => setSettingsOpen(true)}
@@ -127,18 +134,19 @@ export function AppShell() {
             )}
             {modelsOpen && <div className={loginProvider ? "hidden" : "flex min-h-0 flex-1 flex-col"}><ModelPicker active={!loginProvider} onClose={() => setModelsOpen(false)} onLoginRequest={setLoginProvider} /></div>}
             {modelsOpen && loginProvider && <ProviderLogin key={`${cwd}:${loginProvider}`} provider={loginProvider} options={{ cwd, binary: preferences.binary.trim() || "omp", extraArgs: splitExtraArgs(preferences.extraArgs) }} onBack={() => setLoginProvider(undefined)} onSuccess={completeLogin} />}
-            {!modelsOpen && selection && <InspectorDetail selection={selection} data={inspector} onSelect={inspect} onClose={() => setInspection(undefined)} />}
-            <div className={modelsOpen || selection ? "hidden" : "flex min-h-0 flex-1 flex-col overflow-hidden"}>
+            {!modelsOpen && conversationLoading && <div role="status" className="flex min-h-0 flex-1 items-center justify-center gap-2 text-sm text-muted-foreground"><LoaderCircle aria-hidden="true" className="size-4 animate-spin motion-reduce:animate-none" />{branching ? "Loading conversation branch…" : "Loading conversation…"}</div>}
+            {!modelsOpen && !conversationLoading && selection && <InspectorDetail selection={selection} data={inspector} onSelect={inspect} onClose={() => setInspection(undefined)} />}
+            <div className={modelsOpen || selection || conversationLoading ? "hidden" : "@container flex min-h-0 flex-1 flex-col overflow-hidden"}>
               <ChatView key={`chat-${activeRuntimeId}`} />
-              <Composer key={`composer-${activeRuntimeId}`} active={!modelsOpen && !settingsOpen && !selection} onOpenModels={openModels} onOpenSettings={() => setSettingsOpen(true)} onOpenUsage={openUsage} />
+              <Composer key={`composer-${activeRuntimeId}`} active={!modelsOpen && !settingsOpen && !selection && !conversationLoading} onOpenModels={openModels} onOpenSettings={() => setSettingsOpen(true)} onOpenUsage={openUsage} />
             </div>
             {terminalWorkspace === cwd && (
-              <Suspense fallback={terminalVisible ? <div role="status" className="border-t p-3 text-xs text-muted-foreground">Loading terminal…</div> : null}>
-                <TerminalPanel key={cwd} cwd={cwd} open={terminalVisible && !modelsOpen} onHide={() => setTerminalOpen(false)} />
+              <Suspense fallback={terminalVisible && !conversationLoading ? <div role="status" className="flex items-center gap-2 border-t p-3 text-xs text-muted-foreground"><LoaderCircle aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />Loading terminal…</div> : null}>
+                <TerminalPanel key={cwd} cwd={cwd} open={terminalVisible && !modelsOpen && !conversationLoading} onHide={() => setTerminalOpen(false)} />
               </Suspense>
             )}
           </main>
-          {panelOpen && !modelsOpen && (
+          {panelOpen && !modelsOpen && !conversationLoading && (
             <RightPanel data={inspector} onInspect={inspect} onClose={closePanel}
               planUsage={<PlanUsagePopover usage={usage} provider={inspector.session?.model?.provider} open={usageOpen} onOpenChange={setUsageOpen} />} />
           )}

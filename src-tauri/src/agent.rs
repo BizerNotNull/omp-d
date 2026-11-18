@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -45,7 +45,14 @@ pub struct AgentHandle {
 pub struct AgentState {
     pub agents: Mutex<HashMap<u64, Arc<Mutex<AgentHandle>>>>,
     pub generation: AtomicU64,
-    shutting_down: AtomicBool,
+    // A reload must wait for any starts and stops from the previous renderer.
+    lifecycle: Mutex<Lifecycle>,
+}
+
+#[derive(Default)]
+struct Lifecycle {
+    frontend: u64,
+    shutting_down: bool,
 }
 
 impl AgentState {
@@ -76,12 +83,29 @@ impl Drop for WorkspaceExtension {
     }
 }
 
+/// Retire the previous renderer's children before returning a new owner token.
+pub async fn attach_frontend(state: &AgentState) -> Result<u64, String> {
+    let mut lifecycle = state.lifecycle.lock().await;
+    if lifecycle.shutting_down {
+        return Err("Application is shutting down".into());
+    }
+    lifecycle.frontend += 1;
+    stop_agents(state).await?;
+    Ok(lifecycle.frontend)
+}
+
 /// Start an independent RPC session without disturbing any existing child.
 pub async fn start(
     app: AppHandle,
     state: &AgentState,
+    frontend: u64,
     options: StartOptions,
 ) -> Result<StartInfo, String> {
+    let lifecycle = state.lifecycle.lock().await;
+    if frontend == 0 || frontend != lifecycle.frontend || lifecycle.shutting_down {
+        return Err("Agent renderer is no longer active".into());
+    }
+
     let canonical = std::fs::canonicalize(&options.cwd)
         .map_err(|e| format!("Cannot open {}: {e}", options.cwd))?;
     if !canonical.is_dir() {
@@ -157,15 +181,7 @@ pub async fn start(
         pid,
         _workspace_extension: workspace_extension,
     }));
-    {
-        let mut agents = state.agents.lock().await;
-        if state.shutting_down.load(Ordering::SeqCst) {
-            drop(agents);
-            stop_handle(handle).await?;
-            return Err("Application is shutting down".into());
-        }
-        agents.insert(generation, handle);
-    }
+    state.agents.lock().await.insert(generation, handle);
 
     let _ = app.emit(
         "omp://process",
@@ -178,27 +194,43 @@ pub async fn start(
     Ok(info)
 }
 
-/// Remove only the requested child before performing its potentially slow shutdown.
+/// Stop only the requested child, waiting for its process to release session leases.
 pub async fn stop(state: &AgentState, generation: u64) -> Result<(), String> {
-    let handle = state.agents.lock().await.remove(&generation);
-    match handle {
-        Some(handle) => stop_handle(handle).await,
-        None => Ok(()),
+    let _lifecycle = state.lifecycle.lock().await;
+    let handle = state.agents.lock().await.get(&generation).cloned();
+    if let Some(handle) = handle {
+        stop_handle(handle).await?;
+        state.agents.lock().await.remove(&generation);
     }
+    Ok(())
 }
 
 /// Prevent new registrations and stop every owned child on application exit.
 pub async fn stop_all(state: &AgentState) {
-    let handles = {
-        let mut agents = state.agents.lock().await;
-        state.shutting_down.store(true, Ordering::SeqCst);
-        agents.drain().map(|(_, handle)| handle).collect::<Vec<_>>()
-    };
-    let mut stops = tokio::task::JoinSet::new();
-    for handle in handles {
-        stops.spawn(stop_handle(handle));
+    let mut lifecycle = state.lifecycle.lock().await;
+    lifecycle.shutting_down = true;
+    if let Err(error) = stop_agents(state).await {
+        tracing::error!(%error, "agent_shutdown_failed");
     }
-    while stops.join_next().await.is_some() {}
+}
+
+async fn stop_agents(state: &AgentState) -> Result<(), String> {
+    let mut stops = tokio::task::JoinSet::new();
+    for (&generation, handle) in state.agents.lock().await.iter() {
+        let handle = handle.clone();
+        stops.spawn(async move { (generation, stop_handle(handle).await) });
+    }
+    let mut result = Ok(());
+    while let Some(stopped) = stops.join_next().await {
+        match stopped {
+            Ok((generation, Ok(()))) => {
+                state.agents.lock().await.remove(&generation);
+            }
+            Ok((_, Err(error))) => result = Err(error),
+            Err(error) => result = Err(error.to_string()),
+        }
+    }
+    result
 }
 
 async fn stop_handle(handle: Arc<Mutex<AgentHandle>>) -> Result<(), String> {
@@ -213,7 +245,7 @@ async fn stop_handle(handle: Arc<Mutex<AgentHandle>>) -> Result<(), String> {
             tracing::warn!(pid = handle.pid, "agent_shutdown_timeout");
             kill_tree(handle.pid);
             let _ = tokio::time::timeout(Duration::from_secs(2), child.kill()).await;
-            let _ = child.wait().await;
+            child.wait().await.map_err(|e| format!("Failed waiting for killed agent: {e}"))?;
         }
     }
     Ok(())
@@ -457,7 +489,7 @@ mod tests {
         let (second, second_stdout) = echo_agent(&state).await;
         stop_all(&state).await;
         assert!(state.agents.lock().await.is_empty());
-        assert!(state.shutting_down.load(Ordering::SeqCst));
+        assert!(attach_frontend(&state).await.is_err());
         assert!(output(first_stdout).await.is_empty());
         assert!(output(second_stdout).await.is_empty());
         assert!(send(&state, first, serde_json::json!({ "type": "stale" })).await.is_err());

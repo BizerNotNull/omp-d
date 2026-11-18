@@ -44,7 +44,7 @@ export interface Preferences {
   theme: "dark" | "light";
 }
 
-const DEFAULT_PREFS: Preferences = { binary: "omp", extraArgs: "", model: "", theme: "dark" };
+const DEFAULT_PREFS: Preferences = { binary: "omp", extraArgs: "", model: "", theme: "light" };
 
 export function loadPreferences(): Preferences {
   try {
@@ -57,7 +57,7 @@ export function loadPreferences(): Preferences {
       extraArgs:
         typeof (parsed as Preferences).extraArgs === "string" ? (parsed as Preferences).extraArgs : DEFAULT_PREFS.extraArgs,
       model: typeof (parsed as Preferences).model === "string" ? (parsed as Preferences).model : DEFAULT_PREFS.model,
-      theme: (parsed as Preferences).theme === "light" ? "light" : "dark",
+      theme: (parsed as Preferences).theme === "dark" ? "dark" : DEFAULT_PREFS.theme,
     };
   } catch {
     return DEFAULT_PREFS;
@@ -129,6 +129,7 @@ interface AppState {
   setDraftText: (text: string) => void;
   setDraftImages: (images: ImageContent[] | ((current: ImageContent[]) => ImageContent[])) => void;
   status: ConnectionStatus;
+  hydrating: boolean;
   error?: string;
   cwd?: string;
   startInfo?: StartInfo;
@@ -215,6 +216,7 @@ interface AppState {
 let toastSeq = 0;
 let noticeSeq = 0;
 let initialized = false;
+let frontend: Promise<number> | undefined;
 const runtimeModifiedTimes = new Map<number, number>();
 const runtimeDisposers = new WeakMap<RuntimeStore, () => Promise<void>>();
 function createRuntimeStore(id: number, initialSessionPath?: string) {
@@ -281,6 +283,7 @@ const runtime = create<AppState>()((set, get) => ({
   setDraftText: (draftText) => set({ draftText }),
   setDraftImages: (images) => set((state) => ({ draftImages: typeof images === "function" ? images(state.draftImages) : images })),
   status: "idle",
+  hydrating: false,
   preferences: loadPreferences(),
 
   messages: [],
@@ -362,6 +365,7 @@ const runtime = create<AppState>()((set, get) => ({
     const cachedCatalog = catalogSnapshot(catalogCacheKey(cwd, preferences));
     set({
       status: "starting",
+      hydrating: true,
       error: undefined,
       cwd,
       preferences,
@@ -377,6 +381,8 @@ const runtime = create<AppState>()((set, get) => ({
       messageBranches: [],
       treeLoading: false,
       branching: false,
+      commands: [],
+      thinkingLevels: [],
       dialogs: [],
       notices: [],
       statusMarks: {},
@@ -391,7 +397,11 @@ const runtime = create<AppState>()((set, get) => ({
     savePreferences(preferences);
     try {
       const extraArgs = splitExtraArgs(preferences.extraArgs);
-      const info = await omp.start({
+      // All runtimes in this renderer share ownership. A reloaded renderer must
+      // wait for the old children to exit before it can restore a session.
+      const owner = await (frontend ??= invoke<number>("attach_frontend"));
+      if (ticket !== connectTicket) return;
+      const info = await omp.start(owner, {
         cwd,
         binary: preferences.binary.trim() || "omp",
         model: preferences.model.trim() || null,
@@ -415,13 +425,14 @@ const runtime = create<AppState>()((set, get) => ({
       const hydrateStarted = performance.now();
       await get().refreshAll();
       if (ticket !== connectTicket) return;
+      set({ hydrating: false });
       await get().loadSessions();
       if (ticket !== connectTicket) return;
       recordPhase("hydrate", hydrateStarted);
       recordPhase("total", started);
     } catch (error) {
       if (ticket !== connectTicket) return;
-      set({ status: "error", error: describeError(error), sessionsLoading: false });
+      set({ status: "error", hydrating: false, error: describeError(error), sessionsLoading: false });
     }
   },
 
@@ -435,7 +446,7 @@ const runtime = create<AppState>()((set, get) => ({
 
   disconnect: async () => {
     ++connectTicket;
-    set({ status: "stopped" });
+    set({ status: "stopped", hydrating: false });
     if (activeRuntime === runtime) discardSpare();
     catalogSubscription?.();
     subscribedCatalogKey = undefined;
@@ -701,7 +712,7 @@ const runtime = create<AppState>()((set, get) => ({
 
   prompt: async (text, images, behavior) => {
     const trimmed = text.trim();
-    if (get().status !== "ready" || get().branching) return false;
+    if (get().status !== "ready" || get().hydrating || get().branching) return false;
     if (!trimmed) return false;
     const shouldTitle = !get().session?.sessionName && (get().session?.messageCount ?? 0) === 0 && !trimmed.startsWith("/");
     // Goal lifecycle commands must not mark an idle session as streaming.
@@ -1126,7 +1137,7 @@ const runtime = create<AppState>()((set, get) => ({
       case "disconnected":
         catalogSubscription?.();
         subscribedCatalogKey = undefined;
-        set({ status: "stopped", subagents: {}, subagentMessages: {}, subagentsAvailable: undefined, busy: false, branching: false, treeLoading: false, error: event.reason, modelsLoading: false, rolesLoading: false });
+        set({ status: "stopped", hydrating: false, subagents: {}, subagentMessages: {}, subagentsAvailable: undefined, busy: false, branching: false, treeLoading: false, error: event.reason, modelsLoading: false, rolesLoading: false });
         return;
       case "protocol":
         appendDiagnostic(set, `${event.event.kind}: ${event.event.message}`);
@@ -1139,7 +1150,7 @@ const runtime = create<AppState>()((set, get) => ({
         if (event.event.kind === "error") {
           catalogSubscription?.();
           subscribedCatalogKey = undefined;
-          set({ status: "error", subagents: {}, subagentMessages: {}, subagentsAvailable: undefined, error: event.event.message, busy: false, branching: false, treeLoading: false, modelsLoading: false, rolesLoading: false });
+          set({ status: "error", hydrating: false, subagents: {}, subagentMessages: {}, subagentsAvailable: undefined, error: event.event.message, busy: false, branching: false, treeLoading: false, modelsLoading: false, rolesLoading: false });
         }
         return;
     }

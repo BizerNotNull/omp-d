@@ -14,6 +14,8 @@ const ROW_HEIGHT = 72;
 export function Sidebar() {
   const cwd = useAppStore((state) => state.cwd);
   const status = useAppStore((state) => state.status);
+  const hydrating = useAppStore((state) => state.hydrating);
+  const branching = useAppStore((state) => state.branching);
   const session = useAppStore((state) => state.session);
   const activeRuntimeId = useAppStore((state) => state.activeRuntimeId);
   const newSession = useAppStore((state) => state.newSession);
@@ -25,6 +27,7 @@ export function Sidebar() {
   const query = useSessionNavigation((state) => state.query);
   const listing = useSessionNavigation((state) => state.sessionListing);
   const loading = useSessionNavigation((state) => state.sessionsLoading);
+  const loadingMore = useSessionNavigation((state) => state.loadingMore);
   const error = useSessionNavigation((state) => state.error);
   const pins = useSessionNavigation((state) => state.pinnedSessions);
   const setView = useSessionNavigation((state) => state.setView);
@@ -36,6 +39,10 @@ export function Sidebar() {
   const rememberScroll = useSessionNavigation((state) => state.rememberScroll);
   const repositoryCwd = useSessionNavigation((state) => state.repositoryCwd);
   const switchingProject = useSessionNavigation((state) => state.switchingProject);
+  const switchingWorktree = useSessionNavigation((state) => state.switchingWorktree);
+  const switchingWorkspace = Boolean(switchingProject || switchingWorktree);
+  const replacing = switchingWorkspace || (loading && !loadingMore);
+  const conversationPending = switchingWorkspace || hydrating || branching;
   const scrollRef = useRef<HTMLDivElement>(null);
   const restoration = useRef({ key: "", top: 0, pending: true });
   const [viewport, setViewport] = useState({ top: 0, height: 600 });
@@ -43,6 +50,7 @@ export function Sidebar() {
   const scrollKey = JSON.stringify([sessionPathKey(project), view, scope, query]);
   const pinnedKeys = useMemo(() => new Set(pins.map(sessionPathKey)), [pins]);
   const rows = useMemo(() => {
+    if (replacing) return [];
     const directories = listing?.directories ?? [];
     const directoryKeys = new Set(directories.map((item) => sessionPathKey(item.cwd)));
     const saved = new Map((listing?.sessions ?? []).map((item) => [sessionPathKey(item.path), item]));
@@ -72,21 +80,22 @@ export function Sidebar() {
       }
       return true;
     }).sort((a, b) => b.modifiedMs - a.modifiedMs || a.key.localeCompare(b.key));
-  }, [listing, openSessions, cwd, scope, view, query, pinnedKeys]);
+  }, [replacing, listing, openSessions, cwd, scope, view, query, pinnedKeys]);
 
   useLayoutEffect(() => {
     const element = scrollRef.current;
     if (!element) return;
-    if (restoration.current.key !== scrollKey) {
+    if (restoration.current.key !== scrollKey || replacing) {
       restoration.current = { key: scrollKey, top: useSessionNavigation.getState().scrollPositionByScope[scrollKey] ?? 0, pending: true };
     }
+    if (replacing) return;
     const restore = restoration.current;
     if (!restore.pending) return;
     element.scrollTop = restore.top;
     setViewport({ top: element.scrollTop, height: element.clientHeight });
     const reached = restore.top <= element.scrollHeight - element.clientHeight;
     if (listing && !loading && (reached || !listing.nextCursor)) restore.pending = false;
-  }, [scrollKey, rows.length, loading, listing?.nextCursor]);
+  }, [scrollKey, rows.length, loading, replacing, listing?.nextCursor]);
   useEffect(() => {
     const element = scrollRef.current;
     if (!element) return;
@@ -95,8 +104,8 @@ export function Sidebar() {
     return () => observer.disconnect();
   }, []);
   useEffect(() => {
-    if (!loading && !error && listing?.nextCursor && viewport.top + viewport.height >= rows.length * ROW_HEIGHT - ROW_HEIGHT * 5) void loadMore();
-  }, [loading, error, listing?.nextCursor, viewport, rows.length, loadMore]);
+    if (!replacing && !loading && !error && listing?.nextCursor && viewport.top + viewport.height >= rows.length * ROW_HEIGHT - ROW_HEIGHT * 5) void loadMore();
+  }, [replacing, loading, error, listing?.nextCursor, viewport, rows.length, loadMore]);
 
   const start = Math.max(0, Math.floor(viewport.top / ROW_HEIGHT) - 4);
   const end = Math.min(rows.length, Math.ceil((viewport.top + viewport.height) / ROW_HEIGHT) + 4);
@@ -106,7 +115,7 @@ export function Sidebar() {
     <aside aria-label="Project and session navigation" className="flex w-[280px] min-w-0 max-w-[70vw] shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
       <div className="shrink-0 space-y-3 border-b border-sidebar-border px-3 pt-4 pb-3">
         <ProjectSelector />
-        <p className="truncate px-1 text-[10px] text-muted-foreground" title={project}>{project || "Open a folder to get started"}</p>
+        <p className="truncate px-1 text-[10px] text-muted-foreground" title={switchingProject ?? project}>{switchingProject ?? (project || "Open a folder to get started")}</p>
         <div className="space-y-1.5">
           <h2 className="px-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Worktrees</h2>
           <WorktreeSelector value={scope} onSelect={(value) => void selectWorktree(value)} />
@@ -116,7 +125,7 @@ export function Sidebar() {
       <div className="shrink-0 space-y-3 px-3 pt-3 pb-2">
         <div className="flex items-center justify-between">
           <h2 className="px-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Sessions</h2>
-          <Button variant="ghost" className="h-7 gap-1.5 px-2 text-[11px]" disabled={!cwd || status === "starting" || Boolean(switchingProject)} onClick={() => void newSession()}><MessageSquarePlus aria-hidden="true" className="size-3.5" />New Session</Button>
+          <Button variant="ghost" className="h-7 gap-1.5 px-2 text-[11px]" disabled={!cwd || conversationPending} onClick={() => void newSession()}><MessageSquarePlus aria-hidden="true" className="size-3.5" />New Session</Button>
         </div>
         <div className="relative">
           <Search aria-hidden="true" className="pointer-events-none absolute top-2.5 left-2 size-3.5 text-muted-foreground" />
@@ -128,13 +137,13 @@ export function Sidebar() {
             {(["recent", "running", "pinned"] as const).map((candidate) => <button type="button" key={candidate} aria-pressed={candidate === view} onClick={() => setView(candidate)} className={cn("min-w-0 flex-1 rounded-md px-1 py-1.5 text-[11px] capitalize focus-visible:ring-2 focus-visible:ring-ring", candidate === view ? "bg-sidebar-accent font-medium" : "text-muted-foreground hover:text-foreground")}>{candidate}</button>)}
           </div>
         </div>
-        <div className="flex items-center justify-between pt-1 text-[10px] text-muted-foreground"><h2>{heading}</h2>{loading && <LoaderCircle aria-label="Loading sessions" className="size-3 animate-spin motion-reduce:animate-none" />}</div>
+        <h2 className="pt-1 text-[10px] text-muted-foreground">{heading}</h2>
       </div>
       <div ref={scrollRef} aria-label={heading} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 [overflow-anchor:none]" onScroll={(event) => {
         const element = event.currentTarget;
         setViewport({ top: element.scrollTop, height: element.clientHeight });
-        if (!restoration.current.pending) rememberScroll(scrollKey, element.scrollTop);
-      }} onWheel={() => { restoration.current.pending = false; }}>
+        if (!replacing && !restoration.current.pending) rememberScroll(scrollKey, element.scrollTop);
+      }} onWheel={() => { if (!replacing) restoration.current.pending = false; }}>
         <div role="list" aria-label="Sessions" style={{ height: rows.length * ROW_HEIGHT, position: "relative" }}>
           {rows.slice(start, end).map((item, offset) => {
             const current = item.runtime ? item.runtime.id === activeRuntimeId : sessionPathKey(item.path) === sessionPathKey(session?.sessionFile);
@@ -142,7 +151,7 @@ export function Sidebar() {
             const pinned = pinnedKeys.has(sessionPathKey(item.path));
             return <div role="listitem" key={item.key} style={{ position: "absolute", top: (start + offset) * ROW_HEIGHT, height: ROW_HEIGHT, left: 0, right: 0 }} className="pb-1">
               <div className={cn("group flex h-full min-w-0 items-center rounded-lg", current ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60")}>
-                <button type="button" aria-current={current ? "page" : undefined} className="flex h-full min-w-0 flex-1 flex-col justify-center gap-1 rounded-lg px-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" title={`${item.title}\n${item.cwd}`} onClick={(event) => {
+                <button type="button" disabled={conversationPending} aria-current={current ? "page" : undefined} className="flex h-full min-w-0 flex-1 flex-col justify-center gap-1 rounded-lg px-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" title={`${item.title}\n${item.cwd}`} onClick={(event) => {
                   // A refresh can move a different row under the pointer between clicks.
                   if (event.detail > 1 || current) return;
                   if (item.runtime) selectRuntime(item.runtime.id);
@@ -160,10 +169,10 @@ export function Sidebar() {
             </div>;
           })}
         </div>
-        {!rows.length && !loading && !error && <p className="px-2 py-8 text-center text-[11px] text-muted-foreground">{query ? "No matching sessions." : view === "running" ? "No Agent tasks running." : view === "pinned" ? "Pin a session to save it here." : "No sessions in this view."}</p>}
-        {error && <div role="alert" className="p-2 text-[11px] text-destructive">{error}<button type="button" className="mt-2 block underline" onClick={() => void refresh()}>Retry loading sessions</button></div>}
-        {loading && <p role="status" className="p-3 text-center text-[10px] text-muted-foreground">Loading sessions…</p>}
-        {!loading && !error && listing?.nextCursor && <button type="button" onClick={() => void loadMore()} className="w-full p-3 text-[10px] text-muted-foreground hover:text-foreground">Load older sessions</button>}
+        {!rows.length && !replacing && !loading && !error && <p className="px-2 py-8 text-center text-[11px] text-muted-foreground">{query ? "No matching sessions." : view === "running" ? "No Agent tasks running." : view === "pinned" ? "Pin a session to save it here." : "No sessions in this view."}</p>}
+        {!replacing && error && <div role="alert" className="p-2 text-[11px] text-destructive">{error}<button type="button" className="mt-2 block underline" onClick={() => void refresh()}>Retry loading sessions</button></div>}
+        {(replacing || loadingMore) && <p role="status" className="flex items-center justify-center gap-2 p-3 text-[11px] text-muted-foreground"><LoaderCircle aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />{replacing ? "Loading sessions…" : "Loading older sessions…"}</p>}
+        {!replacing && !loading && !error && listing?.nextCursor && <button type="button" onClick={() => void loadMore()} className="w-full p-3 text-[10px] text-muted-foreground hover:text-foreground">Load older sessions</button>}
       </div>
       <div className="shrink-0 border-t border-sidebar-border px-3 py-2.5 text-[10px] text-muted-foreground"><span className={cn("mr-2 inline-block size-1.5 rounded-full", status === "ready" ? "bg-emerald-500" : status === "error" ? "bg-destructive" : "bg-muted-foreground")} />{status === "ready" ? "connected" : status === "starting" ? "starting omp" : status === "error" ? "connection error" : "disconnected"}</div>
     </aside>

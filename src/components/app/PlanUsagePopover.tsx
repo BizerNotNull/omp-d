@@ -1,4 +1,4 @@
-import { ChevronUp, RefreshCw } from "lucide-react";
+import { ChevronUp, LoaderCircle, RefreshCw } from "lucide-react";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
 import { remainingPercent, type PlanUsageState, type QuotaLimit, type UsagePlan } from "@/lib/omp/plan-usage";
 import { cn } from "@/lib/utils";
@@ -78,36 +78,37 @@ export function PlanUsagePopover({ usage, provider, open, onOpenChange }: {
   onOpenChange: (open: boolean) => void;
 }) {
   const { snapshot, refresh } = usage;
-  const plans = snapshot?.plans;
+  const loading = snapshot?.loading ?? open;
+  const plans = loading ? undefined : snapshot?.plans;
   const sameProvider = provider ? plans?.filter((plan) => plan.provider === provider) : undefined;
   const primary = sameProvider?.length ? sameProvider : plans;
   const other = sameProvider?.length ? plans?.filter((plan) => plan.provider !== provider) : undefined;
   const summary: { text?: string; percent?: number } = plans?.length === 1 && sameProvider?.length === 1 && plans[0].limits.length
     ? planSummary(plans[0])
-    : { text: plans?.length ? `${plans.length} ${plans.length === 1 ? "plan" : "plans"}` : snapshot?.loading ? "Checking…" : snapshot?.error || plans ? "Unavailable" : undefined };
+    : { text: loading ? undefined : plans?.length ? `${plans.length} ${plans.length === 1 ? "plan" : "plans"}` : snapshot?.error || plans ? "Unavailable" : undefined };
   return (
     <Popover open={open} onOpenChange={onOpenChange} triggerId={triggerId}>
       <PopoverTrigger id={triggerId} type="button" className="flex min-h-9 w-full shrink-0 items-center gap-2 border-t px-4 text-left text-[11px] hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
         <span className="shrink-0 text-muted-foreground">Plan usage</span>
         <span className={cn("ml-auto truncate tabular-nums", quotaTone(summary.percent))} title={summary.text}>
-          {summary.text}{snapshot?.error && plans?.length ? " · stale" : ""}
+          {loading ? <LoaderCircle role="img" aria-label="Loading plan usage" className="size-3.5 animate-spin motion-reduce:animate-none" /> : summary.text}{snapshot?.error && plans?.length ? " · stale" : ""}
         </span>
         <ChevronUp aria-hidden="true" className="size-3 shrink-0 text-muted-foreground" />
       </PopoverTrigger>
       <PopoverContent side="top" align="end" sideOffset={8} className="w-80 max-w-[calc(100vw-1rem)] overflow-auto overscroll-contain p-3 text-xs motion-reduce:animate-none" style={{ maxHeight: "min(28rem, var(--available-height))" }}>
         <div className="flex items-center justify-between gap-2 border-b border-border pb-2">
           <PopoverTitle>Plan usage</PopoverTitle>
-          <button type="button" aria-label="Refresh usage" title="Refresh usage" aria-disabled={snapshot?.loading || undefined} onClick={() => void refresh(true)} className="grid size-7 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring aria-disabled:opacity-60">
-            <RefreshCw aria-hidden="true" className={cn("size-3.5", snapshot?.loading && "motion-safe:animate-spin")} />
+          <button type="button" aria-label="Refresh usage" title="Refresh usage" disabled={loading} onClick={() => void refresh(true)} className="grid size-7 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60">
+            <RefreshCw aria-hidden="true" className="size-3.5" />
           </button>
         </div>
         <div>
-          <div role="status" className="wrap-anywhere text-xs text-muted-foreground empty:hidden">
-            {snapshot?.loading ? (plans ? "Refreshing usage…" : "Checking usage…")
+          <div role="status" className="flex items-center gap-2 wrap-anywhere text-xs text-muted-foreground empty:hidden">
+            {loading ? <><LoaderCircle aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />Checking usage…</>
               : snapshot?.error ? (plans?.length ? "Refresh failed. Showing previous usage." : "Couldn’t load usage.")
               : plans?.length === 0 ? "No plan usage reported by omp." : null}
           </div>
-          {snapshot?.error && !snapshot.loading && <p className="mt-1 wrap-anywhere text-[11px] text-muted-foreground">{snapshot.error}</p>}
+          {snapshot?.error && !loading && <p className="mt-1 wrap-anywhere text-[11px] text-muted-foreground">{snapshot.error}</p>}
           {plans && plans.length > 1 && <p className="pt-1 text-[11px] text-muted-foreground">omp doesn’t report which account this session uses.</p>}
           {primary?.map((plan, index) => <PlanDetails key={index} plan={plan} index={index} />)}
           {!!other?.length && <details className="border-t border-border pt-2">

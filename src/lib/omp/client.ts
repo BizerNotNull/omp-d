@@ -224,7 +224,7 @@ export class OmpClient {
     if (generation !== undefined) await invoke("stop_agent", { generation });
   }
 
-  start(options: StartOptions): Promise<StartInfo> {
+  start(frontend: number, options: StartOptions): Promise<StartInfo> {
     const seq = ++this.startSeq;
     this.failPending("Restarting the agent");
     return this.serialize(async () => {
@@ -236,7 +236,7 @@ export class OmpClient {
       this.starting = true;
       try {
         const spawnStarted = performance.now();
-        const info = await invoke<StartInfo>("start_agent", { options });
+        const info = await invoke<StartInfo>("start_agent", { frontend, options });
         reportStartupPhase("spawn", spawnStarted);
         this.generation = info.generation;
         this.startInfo = info;

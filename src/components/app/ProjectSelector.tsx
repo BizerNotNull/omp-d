@@ -13,6 +13,8 @@ export function ProjectSelector() {
   const repositoryCwd = useSessionNavigation((state) => state.repositoryCwd);
   const recent = useSessionNavigation((state) => state.recentProjects);
   const switching = useSessionNavigation((state) => state.switchingProject);
+  const switchingWorktree = useSessionNavigation((state) => state.switchingWorktree);
+  const hydrating = useAppStore((state) => state.hydrating);
   const selectProject = useSessionNavigation((state) => state.selectProject);
   const current = repositoryCwd ?? cwd ?? "";
   const [open, setOpen] = useState(false);
@@ -39,9 +41,9 @@ export function ProjectSelector() {
   };
 
   return <Popover open={open} onOpenChange={(next) => { setOpen(next); if (next) { setQuery(""); setIndex(0); } }}>
-    <PopoverTrigger disabled={Boolean(switching)} render={<button type="button" aria-label="Switch project" title={current || "Choose a project"} className="group flex w-full min-w-0 items-center gap-2.5 rounded-lg border border-sidebar-border bg-sidebar-accent/30 p-2.5 text-left hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60" />}>
+    <PopoverTrigger disabled={Boolean(switching || switchingWorktree || hydrating)} render={<button type="button" aria-label="Switch project" title={switching ?? (current || "Choose a project")} className="group flex w-full min-w-0 items-center gap-2.5 rounded-lg border border-sidebar-border bg-sidebar-accent/30 p-2.5 text-left hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60" />}>
       <span className="flex size-8 shrink-0 items-center justify-center rounded-md border border-sidebar-border bg-sidebar">{switching ? <LoaderCircle aria-label="Switching project" className="size-4 animate-spin motion-reduce:animate-none" /> : <FolderOpen aria-hidden="true" className="size-4 text-muted-foreground" />}</span>
-      <span className="min-w-0 flex-1"><span className="block text-[10px] text-muted-foreground">Project</span><span className="block truncate text-[13px] font-medium">{current ? worktreeName(current) : "Choose a project"}</span></span>
+      <span className="min-w-0 flex-1"><span className="block text-[10px] text-muted-foreground">Project</span><span className="block truncate text-[13px] font-medium">{switching ? worktreeName(switching) : current ? worktreeName(current) : "Choose a project"}</span></span>
       <ChevronDown aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
     </PopoverTrigger>
     <PopoverContent align="start" className="w-80 max-w-[calc(100vw-24px)] gap-2">

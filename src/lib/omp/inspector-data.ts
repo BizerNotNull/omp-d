@@ -28,7 +28,7 @@ export function useInspectorData() {
   const notices = useAppStore((state) => state.notices);
   const widgets = useAppStore((state) => state.widgets);
   const statusMarks = useAppStore((state) => state.statusMarks);
-  const [git, setGit] = useState<{ cwd: string; root?: string; files?: ChangedFile[]; error?: string }>();
+  const [git, setGit] = useState<{ cwd: string; busy: boolean; root?: string; files?: ChangedFile[]; error?: string }>();
   useEffect(() => {
     if (!cwd) return;
     let cancelled = false;
@@ -38,9 +38,9 @@ export function useInspectorData() {
       querying = true;
       try {
         const result = await invoke<{ root: string; files: ChangedFile[] } | null>("get_git_changes", { cwd });
-        if (!cancelled) setGit({ cwd: cwd!, root: result?.root, files: result?.files });
+        if (!cancelled) setGit({ cwd: cwd!, busy, root: result?.root, files: result?.files });
       } catch (cause) {
-        if (!cancelled) setGit({ cwd: cwd!, error: String(cause) });
+        if (!cancelled) setGit({ cwd: cwd!, busy, error: String(cause) });
       } finally { querying = false; }
     }
     void refresh();
@@ -51,20 +51,21 @@ export function useInspectorData() {
   const runs = useMemo(() => Object.values(toolRuns).sort((a, b) => b.startedAt - a.startedAt), [toolRuns]);
   const agents = useMemo(() => projectInspectorAgents(toolRuns, messages, subagents, subagentMessages), [toolRuns, messages, subagents, subagentMessages]);
   const touched = useMemo(() => sessionChangedPaths(messages, toolRuns), [messages, toolRuns]);
-  const files = git && git.cwd === cwd ? git.files : undefined;
+  const currentGit = git?.cwd === cwd && git?.busy === busy ? git : undefined;
+  const files = currentGit?.files;
   const sessionFiles = useMemo(() => {
     const normalize = (path: string) => {
       const value = path.replace(/\\/g, "/").replace(/^\.\/|\/*$/g, "");
       return /^[a-z]:\//i.test(value) || value.startsWith("//") ? value.toLowerCase() : value;
     };
-    const root = normalize(git?.root ?? cwd ?? "");
+    const root = normalize(currentGit?.root ?? cwd ?? "");
     const workspace = normalize(cwd ?? "");
     const absolutePaths = new Set([...touched].map((path) => {
       const value = normalize(path);
       return /^(?:[a-z]:\/|\/)/i.test(value) ? value : `${workspace}/${value}`;
     }));
     return files?.filter((file) => absolutePaths.has(normalize(`${root}/${file.path}`)));
-  }, [files, touched, git?.root, cwd]);
+  }, [files, touched, currentGit?.root, cwd]);
   const tasks = session?.todoPhases.flatMap((phase) => phase.tasks) ?? [];
   const activeTask = tasks.find((task) => task.status === "blocked") ?? tasks.find((task) => task.status === "in_progress") ?? tasks.find((task) => task.status === "pending");
   const latestRun = runs[0];
@@ -77,7 +78,7 @@ export function useInspectorData() {
     : mainState === "waiting" || activeTask?.status === "blocked" || liveAgents.some((agent) => agent.status === "waiting") ? "waiting"
     : mainState === "running" || liveAgents.some((agent) => agent.status === "running") ? "running" : "completed";
   const activity = error ?? (dialogs.length ? "Your response is required" : failed ? `${failed.toolName} failed` : running[0] ? describeRun(running[0]) : session?.isCompacting ? "Compacting context" : busy ? "Generating response" : session?.hasPendingAsyncWork ? "Waiting for background work" : "Turn completed");
-  return { session, stats, cwd, runs, messages, agents, tasks, activeTask, files, sessionFiles, gitError: git && git.cwd === cwd ? git.error : undefined, state, mainState, activity, error, notices, widgets, statusMarks, refreshSubagentMessages };
+  return { session, stats, cwd, runs, messages, agents, tasks, activeTask, files, sessionFiles, gitLoading: Boolean(cwd && !currentGit), gitError: currentGit?.error, state, mainState, activity, error, notices, widgets, statusMarks, refreshSubagentMessages };
 }
 export type InspectorData = ReturnType<typeof useInspectorData>;
 export function describeRun(run: ToolRun) {

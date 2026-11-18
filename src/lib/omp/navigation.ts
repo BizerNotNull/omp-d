@@ -7,7 +7,14 @@ export type SessionView = "recent" | "running" | "pinned";
 /** Windows paths are case insensitive; Unix paths are not. */
 export function sessionPathKey(path: string | undefined): string {
   if (!path) return "";
-  const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "") || "/";
+  let normalized = path.replace(/\\/g, "/");
+  // omp can report verbatim Windows paths; native listings use ordinary paths.
+  if (normalized.startsWith("//?/")) {
+    const unprefixed = normalized.slice(4);
+    if (/^[a-z]:\//i.test(unprefixed)) normalized = unprefixed;
+    else if (/^unc\//i.test(unprefixed)) normalized = `//${unprefixed.slice(4)}`;
+  }
+  normalized = normalized.replace(/\/+$/, "") || "/";
   return /^[a-z]:/i.test(normalized) || normalized.startsWith("//") ? normalized.toLowerCase() : normalized;
 }
 
@@ -28,8 +35,10 @@ export interface SessionNavigationState extends NavigationPreferences {
   repositoryCwd?: string;
   sessionListing?: SessionListing;
   sessionsLoading: boolean;
+  loadingMore: boolean;
   error?: string;
   switchingProject?: string;
+  switchingWorktree?: string;
   selectProject: (cwd: string) => Promise<void>;
   setView: (view: SessionView) => void;
   setWorktreeScope: (scope: string) => void;
@@ -95,19 +104,26 @@ function toggle(paths: string[], path: string): string[] {
 function sorted(sessions: SessionSummary[]): SessionSummary[] {
   return sessions.sort((a, b) => b.modifiedMs - a.modifiedMs || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
-function activateFilters() {
+function activateFilters(patch: Partial<NavigationPreferences & Pick<SessionNavigationState, "repositoryCwd">> = {}) {
   window.clearTimeout(searchTimer);
-  const state = useSessionNavigation.getState();
-  const metadata = sessionPathKey(state.sessionListing?.repositoryCwd) === sessionPathKey(state.repositoryCwd)
-    ? state.sessionListing : undefined;
+  searchTimer = undefined;
+  const previous = useSessionNavigation.getState();
+  const state = { ...previous, ...patch };
+  const key = cacheKey(state);
+  const metadata = sessionPathKey(previous.sessionListing?.repositoryCwd) === sessionPathKey(state.repositoryCwd)
+    ? previous.sessionListing : undefined;
+  // A response for these filters may still be in flight when the user returns to them.
+  requests.set(key, (requests.get(key) ?? 0) + 1);
   useSessionNavigation.setState({
-    sessionListing: pages.get(cacheKey(state)) ?? (metadata ? { ...metadata, sessions: [], nextCursor: null } : undefined),
-    sessionsLoading: false,
+    ...patch,
+    sessionListing: metadata ? { ...metadata, sessions: [], nextCursor: null } : undefined,
+    sessionsLoading: Boolean(state.repositoryCwd),
+    loadingMore: false,
     error: undefined,
   });
+  if (!state.repositoryCwd) return;
   if (state.query.trim()) {
-    useSessionNavigation.setState({ sessionsLoading: true });
-    searchTimer = window.setTimeout(() => { void fetchPage(false); }, 200);
+    searchTimer = window.setTimeout(() => { searchTimer = undefined; void fetchPage(false); }, 200);
   } else {
     void fetchPage(false);
   }
@@ -120,7 +136,7 @@ async function fetchPage(more: boolean): Promise<void> {
   if (more && (!cached?.nextCursor || state.sessionsLoading)) return;
   const request = (requests.get(key) ?? 0) + 1;
   requests.set(key, request);
-  useSessionNavigation.setState({ sessionsLoading: true, error: undefined });
+  useSessionNavigation.setState({ sessionsLoading: true, loadingMore: more, error: undefined });
   try {
     const sessions = new Map<string, SessionSummary>();
     if (more) for (const session of cached?.sessions ?? []) sessions.set(sessionPathKey(session.path), session);
@@ -155,33 +171,30 @@ async function fetchPage(more: boolean): Promise<void> {
       const directories = new Set(result.directories.map((item) => sessionPathKey(item.cwd)));
       const lastCwd = current.recentWorktrees.find((cwd) => directories.has(sessionPathKey(cwd))) ?? result.repositoryCwd;
       useSessionNavigation.setState({
-        repositoryCwd: result.repositoryCwd, sessionListing: listing, sessionsLoading: false,
+        repositoryCwd: result.repositoryCwd, sessionListing: listing, sessionsLoading: false, loadingMore: false,
         recentProjects: [result.repositoryCwd, ...current.recentProjects.filter((cwd) => sessionPathKey(cwd) !== root && !directories.has(sessionPathKey(cwd)))].slice(0, 30),
         lastWorktreeByProject: { ...current.lastWorktreeByProject, [root]: lastCwd },
       });
     }
   } catch (error) {
     if (requests.get(key) === request && cacheKey(useSessionNavigation.getState()) === key) {
-      useSessionNavigation.setState({ sessionsLoading: false, error: error instanceof Error ? error.message : String(error) });
+      useSessionNavigation.setState({ sessionsLoading: false, loadingMore: false, error: error instanceof Error ? error.message : String(error) });
     }
   }
 }
 
 export const useSessionNavigation = create<SessionNavigationState>()((set, get) => ({
-  ...preferences(), sessionsLoading: false,
-  setView: (view) => { set({ view }); activateFilters(); },
-  setWorktreeScope: (worktreeScope) => { ++selectionRequest; set({ worktreeScope }); activateFilters(); },
-  setQuery: (query) => { set({ query }); activateFilters(); },
-  toggleSessionPin: (path) => {
-    set({ pinnedSessions: toggle(get().pinnedSessions, path) });
-    activateFilters();
-  },
+  ...preferences(), sessionsLoading: false, loadingMore: false,
+  setView: (view) => { if (view !== get().view) activateFilters({ view }); },
+  setWorktreeScope: (worktreeScope) => { ++selectionRequest; activateFilters({ worktreeScope }); },
+  setQuery: (query) => { if (query !== get().query) activateFilters({ query }); },
+  toggleSessionPin: (path) => activateFilters({ pinnedSessions: toggle(get().pinnedSessions, path) }),
   toggleWorktreePin: (cwd) => set({ pinnedWorktrees: toggle(get().pinnedWorktrees, cwd) }),
   rememberScroll: (key, offset) => set({ scrollPositionByScope: { ...get().scrollPositionByScope, [key]: offset } }),
   loadMore: () => fetchPage(true),
-  refresh: () => fetchPage(false),
+  refresh: async () => { if (searchTimer === undefined) await fetchPage(false); },
   selectProject: async (cwd) => {
-    if (get().switchingProject) return;
+    if (get().switchingProject || get().switchingWorktree) return;
     const request = ++selectionRequest;
     set({ switchingProject: cwd, error: undefined });
     try {
@@ -200,13 +213,15 @@ export const useSessionNavigation = create<SessionNavigationState>()((set, get) 
     }
   },
   selectWorktree: async (scope) => {
+    if (get().switchingWorktree) return;
+    if (scope !== "all") set({ switchingWorktree: scope });
     get().setWorktreeScope(scope);
     const request = selectionRequest;
     if (scope === "all") return;
-    set({ recentWorktrees: [scope, ...get().recentWorktrees.filter((cwd) => sessionPathKey(cwd) !== sessionPathKey(scope))].slice(0, 30) });
     const remembered = get().lastSessionByWorktree[sessionPathKey(scope)];
-    if (runtimeActions?.selectOpenSession(scope, remembered)) return;
     try {
+      set({ recentWorktrees: [scope, ...get().recentWorktrees.filter((cwd) => sessionPathKey(cwd) !== sessionPathKey(scope))].slice(0, 30) });
+      if (runtimeActions?.selectOpenSession(scope, remembered)) return;
       let session: SessionSummary | undefined;
       if (remembered) {
         const listing = await invoke<SessionListing>("list_sessions", { cwd: get().repositoryCwd ?? scope, scope, paths: [remembered], limit: 1 });
@@ -221,6 +236,8 @@ export const useSessionNavigation = create<SessionNavigationState>()((set, get) 
       else await runtimeActions?.newSession(scope);
     } catch (error) {
       if (request === selectionRequest) set({ error: error instanceof Error ? error.message : String(error) });
+    } finally {
+      set({ switchingWorktree: undefined });
     }
   },
 }));
@@ -250,9 +267,9 @@ export function rememberActiveSession(cwd: string, path?: string) {
   const lastSessionByWorktree = path && state.lastSessionByWorktree[key] !== path
     ? { ...state.lastSessionByWorktree, [key]: path } : state.lastSessionByWorktree;
   if (changedProject || recentWorktrees !== state.recentWorktrees || lastSessionByWorktree !== state.lastSessionByWorktree) {
-    useSessionNavigation.setState({ repositoryCwd, recentWorktrees, lastSessionByWorktree,
-      lastWorktreeByProject: repositoryCwd ? { ...state.lastWorktreeByProject, [sessionPathKey(repositoryCwd)]: cwd } : state.lastWorktreeByProject,
-      worktreeScope: changedProject ? "all" : state.worktreeScope });
+    const patch = { repositoryCwd, recentWorktrees, lastSessionByWorktree,
+      lastWorktreeByProject: repositoryCwd ? { ...state.lastWorktreeByProject, [sessionPathKey(repositoryCwd)]: cwd } : state.lastWorktreeByProject };
+    if (changedProject) activateFilters({ ...patch, worktreeScope: "all" });
+    else useSessionNavigation.setState(patch);
   }
-  if (changedProject) activateFilters();
 }

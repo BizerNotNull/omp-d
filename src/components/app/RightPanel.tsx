@@ -56,6 +56,7 @@ export function RightPanel({ data, planUsage, onInspect, onClose }: { data: Insp
           </div>
           {finishedAgents > 0 && <button type="button" onClick={() => onInspect({ kind: "agent", id: "all" })} className="mt-1 flex w-full items-center gap-2 rounded px-2 py-1.5 text-[11px] text-muted-foreground hover:bg-sidebar-accent"><Check className="size-3" />{finishedAgents} {finishedAgents === 1 ? "agent" : "agents"} completed<ChevronRight className="ml-auto size-3" /></button>}
         </section>}
+        {data.gitLoading && <p role="status" className="flex items-center gap-2 px-1 py-4 text-[11px] text-muted-foreground"><LoaderCircle aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />Loading Git changes…</p>}
         {files && files.length > 0 && <section aria-label="Changes" className="py-4">
           <div className="mb-2 flex items-center justify-between px-1"><h3 className="text-[11px] font-medium text-muted-foreground">Changes</h3><span className="text-[10px] tabular-nums text-muted-foreground">{files.length} files</span></div>
           <div id="inspector-changes" className="inspector-files">{[...files].sort((a, b) => Number(b.status === "conflicted") - Number(a.status === "conflicted") || Number(data.sessionFiles?.includes(b)) - Number(data.sessionFiles?.includes(a))).slice(0, changesExpanded ? undefined : 5).map((file) => <FileChangeRow key={file.path} file={file} onClick={() => onInspect({ kind: "diff", path: file.path })} />)}</div>

@@ -29,10 +29,14 @@ children; it asks the supervisor to start, send to, or stop them.
 
 1. `AppShell` calls `bootstrap()` once. `bootstrap` reads `ompd:lastCwd`, or the
    `OMPD_CWD` fallback through `initial_folder`, then calls `connect(cwd)`.
-2. Each open session has its own `OmpClient` and isolated Zustand store.
-   `OmpClient.start` invokes `start_agent` with `cwd`, optional `model`, optional
-   binary override and extra CLI arguments. Rust canonicalizes the path, strips
-   the Windows `\\?\` prefix, then spawns an independent child:
+2. Each open session has its own `OmpClient` and isolated Zustand store. Before
+   starting the first runtime, the renderer calls `attach_frontend`. Rust waits
+   for children from the previous renderer to exit so their session write leases
+   are released. All runtimes in the new renderer share the returned owner token.
+   `OmpClient.start` passes this token to `start_agent` with `cwd`, optional
+   `model`, optional binary override and extra CLI arguments. Rust rejects old
+   owner tokens, canonicalizes the path, strips the Windows `\\?\` prefix, and
+   spawns an independent child:
 
    ```
    omp --mode rpc-ui --cwd <path> [--model <model>] [extra…]
@@ -256,6 +260,10 @@ that session's directory and opens the file with `switch_session`. It never
 sends a switch command to another session's running child. Selecting a Worktree
 filter restores that Worktree's last conversation; selecting All Worktrees only
 changes the list. Opening a session never changes the filter.
+
+Session lookups and sidebar rows use the same path key, including for Windows
+verbatim drive and UNC paths. Equivalent spellings reuse the same runtime
+while restore is pending and after omp reports its session file.
 
 - New session: start an independent runtime in the active session's Worktree,
   falling back to the last selected Worktree and then the main checkout. Empty

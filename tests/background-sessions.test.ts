@@ -5,6 +5,7 @@ const commands: Array<{ generation: number; command: Record<string, unknown> }> 
 const stopped: number[] = [];
 let generation = 0;
 let acknowledgePrompt: (() => void) | undefined;
+const restoredPaths = new Map<number, string>();
 const storage = new Map<string, string>([["ompd:lastCwd", "D:/project"]]);
 Object.assign(globalThis, {
   window: globalThis,
@@ -34,6 +35,7 @@ mock.module("@tauri-apps/api/event", () => ({
 mock.module("@tauri-apps/plugin-dialog", () => ({ open: async () => null }));
 mock.module("@tauri-apps/plugin-opener", () => ({ openUrl: async () => {} }));
 mock.module("@tauri-apps/api/core", () => ({
+  isTauri: () => false,
   invoke: async (name: string, args: { generation: number; command: { type: string; id: string } & Record<string, unknown>; options: { cwd: string } }) => {
     if (name === "start_agent") {
       const owner = ++generation;
@@ -42,7 +44,7 @@ mock.module("@tauri-apps/api/core", () => ({
       return { generation: owner, pid: owner, cwd: args.options.cwd, program: "omp", args: [] };
     }
     if (name === "stop_agent") { stopped.push(args.generation); return; }
-    if (name === "list_sessions") return { repositoryCwd: "D:/project", directories: [] };
+    if (name === "list_sessions") return { repositoryCwd: "D:/project", directories: [], sessions: [] };
     if (name === "model_catalog") return [];
     if (name === "model_roles") return {};
     if (name !== "rpc_send") throw new Error(`Unexpected invoke: ${name}`);
@@ -53,8 +55,12 @@ mock.module("@tauri-apps/api/core", () => ({
       case "prompt":
         if (!command.id.startsWith("ompd-workspace-")) { acknowledgePrompt = () => respond({ agentInvoked: true }); return; }
         break;
+      case "switch_session":
+        restoredPaths.set(owner, String(command.sessionPath));
+        respond({ cancelled: false });
+        return;
       case "get_state":
-        respond({ sessionId: `session-${owner}`, sessionFile: `D:/sessions/${owner}.jsonl`, sessionName: `Session ${owner}`, isStreaming: owner === 1, messageCount: 1 });
+        respond({ sessionId: `session-${owner}`, sessionFile: restoredPaths.get(owner) ?? `D:/sessions/${owner}.jsonl`, sessionName: `Session ${owner}`, isStreaming: owner === 1, messageCount: 1 });
         return;
       case "get_messages": respond({ messages: [{ role: "user", content: "Existing conversation", timestamp: 1 }] }); return;
       case "get_entries": respond({ entries: [], leafId: null }); return;
@@ -66,45 +72,74 @@ mock.module("@tauri-apps/api/core", () => ({
   },
 }));
 
+// Load after installing the transport mocks; a static import runs too early.
+const { useAppStore } = await import("../src/lib/omp/store");
+
 test("switching retains background execution, drafts, dialogs and command ownership", async () => {
-  // Load after installing the transport mocks; a static import runs too early.
-  const { useAppStore } = await import("../src/lib/omp/store");
   await useAppStore.getState().bootstrap();
   const first = useAppStore.getState();
+  const firstOwner = first.startInfo!.generation;
   first.setDraftText("first draft");
   const prompt = first.prompt("Continue working");
-  expect(first.activeRuntimeId).toBe(1);
   await first.newSession();
   const second = useAppStore.getState();
-  expect(second.activeRuntimeId).toBe(2);
+  const secondOwner = second.startInfo!.generation;
+  expect(second.activeRuntimeId).not.toBe(first.activeRuntimeId);
   expect(second.draftText).toBe("");
   second.setDraftText("second draft");
-  expect(stopped).toEqual([]);
+  expect(stopped).not.toContain(firstOwner);
   const message = { role: "assistant", content: [{ type: "text", text: "background output" }], timestamp: 1 };
-  frame(1, { type: "message_start", messageId: "background", message });
-  frame(1, { type: "extension_ui_request", method: "confirm", id: "same-id", title: "First confirmation" });
-  frame(2, { type: "extension_ui_request", method: "confirm", id: "same-id", title: "Second confirmation" });
+  frame(firstOwner, { type: "message_start", messageId: "background", message });
+  frame(firstOwner, { type: "extension_ui_request", method: "confirm", id: "same-id", title: "First confirmation" });
+  frame(secondOwner, { type: "extension_ui_request", method: "confirm", id: "same-id", title: "Second confirmation" });
   expect(useAppStore.getState().pending).toEqual([]);
   expect(useAppStore.getState().dialogs[0].title).toBe("Second confirmation");
-  expect(useAppStore.getState().openSessions.find((entry) => entry.id === 1)).toMatchObject({ busy: true, dialogs: 1 });
+  expect(useAppStore.getState().openSessions.find((entry) => entry.id === first.activeRuntimeId)).toMatchObject({ busy: true, dialogs: 1 });
   await second.switchSession("D:\\sessions\\1.jsonl");
-  expect(generation).toBe(2);
-  expect(useAppStore.getState().activeRuntimeId).toBe(1);
+  expect(useAppStore.getState().startInfo?.generation).toBe(firstOwner);
+  expect(useAppStore.getState().activeRuntimeId).toBe(first.activeRuntimeId);
   expect(useAppStore.getState().pending[0].message).toEqual(message);
   expect(useAppStore.getState().draftText).toBe("first draft");
   expect(useAppStore.getState().dialogs[0].title).toBe("First confirmation");
   await useAppStore.getState().answerDialog("same-id", { confirmed: true });
-  expect(commands.at(-1)).toMatchObject({ generation: 1, command: { type: "extension_ui_response", id: "same-id" } });
-  useAppStore.getState().selectRuntime(2);
+  expect(commands.at(-1)).toMatchObject({ generation: firstOwner, command: { type: "extension_ui_response", id: "same-id" } });
+  useAppStore.getState().selectRuntime(second.activeRuntimeId);
   expect(useAppStore.getState().dialogs[0].title).toBe("Second confirmation");
   expect(useAppStore.getState().draftText).toBe("second draft");
   acknowledgePrompt!();
   expect(await prompt).toBe(true);
-  expect(useAppStore.getState().activeRuntimeId).toBe(2);
+  expect(useAppStore.getState().activeRuntimeId).toBe(second.activeRuntimeId);
   await second.disconnect();
-  expect(stopped).toEqual([2]);
-  useAppStore.getState().selectRuntime(1);
+  expect(stopped).toContain(secondOwner);
+  expect(stopped).not.toContain(firstOwner);
+  useAppStore.getState().selectRuntime(first.activeRuntimeId);
   expect(useAppStore.getState().status).toBe("ready");
   expect(useAppStore.getState().busy).toBe(true);
   await useAppStore.getState().disconnect();
+});
+
+test.each([
+  ["\\\\?\\D:\\sessions\\saved.jsonl", "d:/sessions/saved.jsonl"],
+  ["\\\\?\\UNC\\Server\\Share\\saved.jsonl", "//server/share/saved.jsonl"],
+])("reopening %s reuses one runtime during and after restore", async (verbatim, listed) => {
+  const get = useAppStore.getState;
+  const original = get().activeRuntimeId;
+  const previous = get().openSessions.length;
+  const commandStart = commands.length;
+
+  const restoring = get().switchSession(verbatim, "D:/project");
+  const selected = get().activeRuntimeId;
+  await Promise.all([restoring, get().switchSession(listed, "D:/project")]);
+  expect(get().activeRuntimeId).toBe(selected);
+  expect(get().session?.sessionFile).toBe(verbatim);
+
+  get().setDraftText("Keep this draft when reopening");
+  get().selectRuntime(original);
+  await get().switchSession(listed, "D:/project");
+  expect(get().activeRuntimeId).toBe(selected);
+  expect(get().draftText).toBe("Keep this draft when reopening");
+  expect(get().openSessions).toHaveLength(previous + 1);
+  expect(commands.slice(commandStart).filter(({ command }) => command.type === "switch_session"))
+    .toHaveLength(1);
+  await get().disconnect();
 });

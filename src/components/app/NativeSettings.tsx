@@ -44,16 +44,15 @@ export function NativeSettings({ active }: { active: boolean }) {
     binary: binary.trim() || "omp",
     extraArgs: splitExtraArgs(extraArgs),
   } : undefined, [cwd, binary, extraArgs]);
-  const scope = JSON.stringify([active, options]);
+  const [reload, setReload] = useState(0);
+  const scope = JSON.stringify([active, options, reload]);
   const currentScope = useRef(scope);
   currentScope.current = scope;
   const request = useRef(0);
   const writeLock = useRef(false);
   const [catalog, setCatalog] = useState<CatalogState>();
-  const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<{ scope: string; message: string }>();
   const [writing, setWriting] = useState<string>();
-  const [reload, setReload] = useState(0);
   const [search, setSearch] = useState("");
   const [group, setGroup] = useState<string>();
   const [effectiveStale, setEffectiveStale] = useState(false);
@@ -65,11 +64,7 @@ export function NativeSettings({ active }: { active: boolean }) {
     setEffectiveStale(false);
     setWriting(undefined);
     writeLock.current = false;
-    if (!active || !options) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
+    if (!active || !options) return;
     const isCurrent = () => currentScope.current === scope && request.current === ticket;
     void invoke<NativeSettingsCatalog>("native_settings", { options }).then((result) => {
       if (!isCurrent()) return;
@@ -81,13 +76,13 @@ export function NativeSettings({ active }: { active: boolean }) {
       });
     }).catch((error: unknown) => {
       if (isCurrent()) setLoadError({ scope, message: error instanceof Error ? error.message : String(error) });
-    }).finally(() => {
-      if (isCurrent()) setLoading(false);
     });
     return () => { ++request.current; };
-  }, [active, options, scope, reload]);
+  }, [active, options, scope]);
 
   const visibleCatalog = catalog?.scope === scope ? catalog : undefined;
+  const loadFailed = loadError?.scope === scope;
+  const loading = Boolean(options && !visibleCatalog && !loadFailed);
   const entries = visibleCatalog?.entries;
   const query = search.trim().toLowerCase();
   const matching = Object.entries(entries ?? {}).filter(([key, entry]) =>
@@ -215,7 +210,7 @@ export function NativeSettings({ active }: { active: boolean }) {
       {hasOverlay && <p role="note" className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-xs text-muted-foreground">Config overlays (--config) are not supported by native configuration queries or writes. This editor shows project/profile settings and writes the global layer, not the overlay.</p>}
       {!cwd ? <p className="text-xs text-muted-foreground">Select a project before loading native settings.</p> : loading ? (
         <p role="status" className="flex items-center gap-2 py-6 text-xs text-muted-foreground"><LoaderCircle className="size-4 animate-spin" /> Loading native settings…</p>
-      ) : loadError?.scope === scope ? (
+      ) : loadFailed ? (
         <div role="alert" className="space-y-2 rounded-md border border-destructive/30 p-3">
           <p className="break-words text-xs text-destructive">{loadError.message}</p>
           <Button type="button" variant="outline" size="sm" onClick={() => setReload((value) => value + 1)}>Retry</Button>
@@ -253,8 +248,8 @@ export function NativeSettings({ active }: { active: boolean }) {
               </div>
               <p id={descriptionId} className="break-words text-[11px] text-muted-foreground">{entry.description || "Native configuration option."}</p>
               <div className="min-w-0 rounded-md bg-muted/40 p-2 text-[10.5px]">
-                <div className="text-muted-foreground">Effective now{effectiveStale ? " (last loaded)" : ""}</div>
-                <pre className="scroll-thin max-h-24 overflow-auto whitespace-pre-wrap break-all font-mono">{effective}</pre>
+                <div className="text-muted-foreground">Effective now{effectiveStale && !writing ? " (last loaded)" : ""}</div>
+                {effectiveStale && writing ? <p role="status" className="flex items-center gap-2"><LoaderCircle aria-hidden="true" className="size-3 animate-spin motion-reduce:animate-none" />Refreshing effective settings…</p> : <pre className="scroll-thin max-h-24 overflow-auto whitespace-pre-wrap break-all font-mono">{effective}</pre>}
               </div>
               <div className="text-[10.5px] text-muted-foreground">Global override: {entry.stored === undefined ? "not set (inherited)" : secret ? "configured (hidden)" : "stored"}. {secret ? "Leave blank to keep it unchanged; enter a replacement to Save." : "Only this global layer is edited below."}</div>
               {!!choiceValues?.length && !secret ? <select id={controlId} className={fieldClass} disabled={busy} value={selected} aria-describedby={`${descriptionId} ${feedbackId}`} onChange={(event) => updateDraft(key, event.target.value === "inherit" ? { mode: "inherit", text: "" } : { mode: "value", text: event.target.value.slice(6) })}>

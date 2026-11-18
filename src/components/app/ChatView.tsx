@@ -70,10 +70,9 @@ export function ChatView() {
 
   return (
     <div className="relative min-h-0 flex-1">
-      <div ref={scrollRef} onScroll={onScroll} className="scroll-thin h-full overflow-y-auto px-4">
-        <div ref={contentRef} className="mx-auto w-full max-w-3xl pt-4 pb-2">
+      <div ref={scrollRef} onScroll={onScroll} className="scroll-thin h-full overflow-y-auto [scrollbar-gutter:stable_both-edges]">
+        <div ref={contentRef} className="conversation-lane pt-3 pb-2">
           {empty ? <TranscriptEmpty /> : <Transcript messages={messages} pending={pending} />}
-          <div className="h-2" />
         </div>
       </div>
 

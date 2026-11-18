@@ -169,7 +169,6 @@ export async function fetchCatalog(key: string, options: CatalogOptions, force =
     const revision = entry.revision;
     // Defer invocation so reentrant subscribers also see the shared request.
     const request = Promise.resolve().then(async () => {
-      publish(kind === "models" ? { modelsLoading: true, modelsError: undefined } : { rolesLoading: true, rolesError: undefined });
       try {
         if (kind === "models") {
           const models = await invoke<Model[]>("model_catalog", { options });
@@ -188,10 +187,11 @@ export async function fetchCatalog(key: string, options: CatalogOptions, force =
         publish(kind === "models" ? { modelsError: message } : { rolesError: message });
       } finally {
         entry[requestKey] = undefined;
-        publish(kind === "models" ? { modelsLoading: false } : { rolesLoading: false });
+        if (revision === entry.revision) publish(kind === "models" ? { modelsLoading: false } : { rolesLoading: false });
       }
     });
     entry[requestKey] = { revision, promise: request };
+    publish(kind === "models" ? { modelsLoading: true, modelsError: undefined } : { rolesLoading: true, rolesError: undefined });
     return request;
   };
   await Promise.all([query("models"), query("roles")]);

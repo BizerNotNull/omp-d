@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { invoke } from "@/lib/diagnostics";
 import { catalogCacheKey, splitExtraArgs } from "./model-catalog";
 
@@ -134,7 +134,7 @@ export function usePlanUsage(cwd: string | undefined, binary: string, extraArgs:
     }
   }, [key, cwd, binary, extraArgs]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (open) void refresh();
   }, [open, refresh]);
 

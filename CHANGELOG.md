@@ -2,14 +2,14 @@
 
 ## Unreleased
 
-### Added
-- Inspector shows provider plan quotas in a click-open popover above Context; `/usage` opens and refreshes it without sending a prompt
-
 ### Changed
-- Context resource details open on click instead of hover; the footer keeps its usage summary and progress bar
+- The desktop app defaults to the light theme when no theme preference is saved
+- The main conversation drops message avatars and the “You” label. The transcript and composer share a wider layout, with a separate line-width limit for reply prose
 
 ### Fixed
-- Double-clicking a sidebar session no longer opens a second session if the list reorders between clicks
+- Session and workspace switches, model catalog refreshes, plan usage, and native settings reloads show a spinner instead of previous data while loading. Session pagination keeps already-loaded rows visible
+- Reopening a saved session through another Windows path spelling reuses its existing process and sidebar row
+- Reloading the desktop renderer now stops its previous agent processes before restoring the saved session, so leftover write locks no longer cause duplicate sessions
 ## 0.1.0 — 2026-11-06
 
 Initial desktop client for Oh My Pi.

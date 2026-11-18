@@ -142,7 +142,12 @@ export function Sidebar() {
             const pinned = pinnedKeys.has(sessionPathKey(item.path));
             return <div role="listitem" key={item.key} style={{ position: "absolute", top: (start + offset) * ROW_HEIGHT, height: ROW_HEIGHT, left: 0, right: 0 }} className="pb-1">
               <div className={cn("group flex h-full min-w-0 items-center rounded-lg", current ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60")}>
-                <button type="button" aria-current={current ? "page" : undefined} className="flex h-full min-w-0 flex-1 flex-col justify-center gap-1 rounded-lg px-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" title={`${item.title}\n${item.cwd}`} onClick={() => item.runtime ? selectRuntime(item.runtime.id) : void switchSession(item.path, item.cwd)}>
+                <button type="button" aria-current={current ? "page" : undefined} className="flex h-full min-w-0 flex-1 flex-col justify-center gap-1 rounded-lg px-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" title={`${item.title}\n${item.cwd}`} onClick={(event) => {
+                  // A refresh can move a different row under the pointer between clicks.
+                  if (event.detail > 1 || current) return;
+                  if (item.runtime) selectRuntime(item.runtime.id);
+                  else void switchSession(item.path, item.cwd);
+                }}>
                   <span className="flex w-full min-w-0 items-center gap-1.5">
                     {item.runtime?.busy ? <LoaderCircle aria-label="Agent running" className="size-3 shrink-0 animate-spin text-emerald-500 motion-reduce:animate-none" /> : <span aria-hidden="true" className={cn("size-1.5 shrink-0 rounded-full", current ? "bg-emerald-500" : "bg-muted-foreground/40")} />}
                     <span className={cn("min-w-0 truncate text-[12px]", current && "font-medium")}>{item.title}</span>

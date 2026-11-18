@@ -26,7 +26,7 @@ function readImage(file: File): Promise<ImageContent | undefined> {
   });
 }
 
-export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModels: () => void; onOpenSettings: () => void; active: boolean }) {
+export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, active }: { onOpenModels: () => void; onOpenSettings: () => void; onOpenUsage: () => void; active: boolean }) {
   const draft = useAppStore((state) => state.draftText);
   const setDraft = useAppStore((state) => state.setDraftText);
   const images = useAppStore((state) => state.draftImages);
@@ -75,6 +75,7 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
       { name: "model", description: "Choose a model for this session", source: "builtin" },
       { name: "models", description: "Browse providers, roles, and models", source: "builtin" },
       { name: "settings", description: "Configure Oh My Pi and desktop preferences", source: "builtin" },
+      { name: "usage", description: "Show provider plan usage", source: "builtin" },
       { name: "goal", description: "Show the current goal or set an objective", source: "builtin" },
       ...[
         ["set", "Start a goal: /goal set <objective>"],
@@ -83,7 +84,7 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
         ["resume", "Resume a paused goal"],
         ["drop", "Drop the current goal"],
       ].map(([name, description]) => ({ name: `goal ${name}`, description, source: "builtin" })),
-      ...commands.filter((command) => !["model", "models", "settings", "goal", "guided-goal"].includes(command.name)),
+      ...commands.filter((command) => !["model", "models", "settings", "usage", "goal", "guided-goal"].includes(command.name)),
     ];
     return available.filter(
       (command) => command.name.toLowerCase().startsWith(query) && (query.includes(" ") || !command.name.includes(" ")),
@@ -112,6 +113,11 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
       onOpenSettings();
       return;
     }
+    if (text === "/usage") {
+      setDraft("");
+      onOpenUsage();
+      return;
+    }
     sendingRef.current = true;
     setSubmitting(true);
     try {
@@ -136,6 +142,11 @@ export function Composer({ onOpenModels, onOpenSettings, active }: { onOpenModel
     if (command.name === "settings") {
       setDraft("");
       onOpenSettings();
+      return;
+    }
+    if (command.name === "usage") {
+      setDraft("");
+      onOpenUsage();
       return;
     }
     setDraft(`/${command.name} `);

@@ -3,11 +3,13 @@
 ## Unreleased
 
 ### Added
-- Startup diagnostics record process spawn, readiness, session restore, hydration, and total duration
+- Inspector shows provider plan quotas in a click-open popover above Context; `/usage` opens and refreshes it without sending a prompt
 
 ### Changed
-- New sessions use one background-prewarmed omp process when available; startup configuration changes retire stale spares
-- The composer accepts drafts and pasted images while omp starts; sending waits for readiness
+- Context resource details open on click instead of hover; the footer keeps its usage summary and progress bar
+
+### Fixed
+- Double-clicking a sidebar session no longer opens a second session if the list reorders between clicks
 ## 0.1.0 — 2026-11-06
 
 Initial desktop client for Oh My Pi.

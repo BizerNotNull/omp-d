@@ -5,6 +5,7 @@ import { TopBar } from "./TopBar";
 import { ChatView } from "./ChatView";
 import { Composer } from "./Composer";
 import { RightPanel } from "./RightPanel";
+import { PlanUsagePopover } from "./PlanUsagePopover";
 import { StatusBar } from "./StatusBar";
 import { Welcome } from "./Welcome";
 import { Toasts } from "./Toasts";
@@ -12,6 +13,7 @@ import { ModelPicker } from "./ModelPicker";
 import { ProviderLogin } from "./ProviderLogin";
 import { SettingsDialog } from "./SettingsDialog";
 import { catalogCacheKey, invalidateCatalog, splitExtraArgs } from "@/lib/omp/model-catalog";
+import { usePlanUsage } from "@/lib/omp/plan-usage";
 import { useAppStore } from "@/lib/omp/store";
 import { InspectorDetail } from "./InspectorDetail";
 import { useInspectorData, type InspectorSelection } from "@/lib/omp/inspector-data";
@@ -28,6 +30,9 @@ export function AppShell() {
   const [loginProvider, setLoginProvider] = useState<string>();
   const preferences = useAppStore((state) => state.preferences);
   const [panelOpen, setPanelOpen] = useState(true);
+  const [usageOpen, setUsageOpen] = useState(false);
+  const [authRevision, setAuthRevision] = useState(0);
+  const usage = usePlanUsage(cwd, preferences.binary, preferences.extraArgs, authRevision, usageOpen);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalWorkspace, setTerminalWorkspace] = useState<string>();
   const terminalVisible = terminalOpen && terminalWorkspace === cwd;
@@ -71,6 +76,29 @@ export function AppShell() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [cwd, terminalWorkspace]);
 
+  function closePanel() {
+    setUsageOpen(false);
+    setPanelOpen(false);
+  }
+
+  function openUsage() {
+    setPanelOpen(true);
+    setUsageOpen(true);
+    void usage.refresh(true);
+  }
+
+  function openModels() {
+    setUsageOpen(false);
+    setModelsOpen(true);
+  }
+
+  function completeLogin() {
+    setLoginProvider(undefined);
+    setAuthRevision((revision) => revision + 1);
+    if (cwd) invalidateCatalog(catalogCacheKey(cwd, preferences));
+    void useAppStore.getState().fetchModels();
+  }
+
   if (!cwd) {
     return (
       <TooltipProvider>
@@ -89,18 +117,20 @@ export function AppShell() {
         <div className="relative flex min-h-0 flex-1">
           {!modelsOpen && <Sidebar />}
           <main className="relative flex min-w-0 flex-1 flex-col">
-            {!modelsOpen && <TopBar
-              onOpenModels={() => setModelsOpen(true)}
-              onOpenSettings={() => setSettingsOpen(true)}
-              onTogglePanel={() => setPanelOpen((value) => !value)}
-              panelOpen={panelOpen}
-            />}
+            {!modelsOpen && (
+              <TopBar
+                onOpenModels={openModels}
+                onOpenSettings={() => setSettingsOpen(true)}
+                onTogglePanel={() => panelOpen ? closePanel() : setPanelOpen(true)}
+                panelOpen={panelOpen}
+              />
+            )}
             {modelsOpen && <div className={loginProvider ? "hidden" : "flex min-h-0 flex-1 flex-col"}><ModelPicker active={!loginProvider} onClose={() => setModelsOpen(false)} onLoginRequest={setLoginProvider} /></div>}
-            {modelsOpen && loginProvider && <ProviderLogin key={`${cwd}:${loginProvider}`} provider={loginProvider} options={{ cwd, binary: preferences.binary.trim() || "omp", extraArgs: splitExtraArgs(preferences.extraArgs) }} onBack={() => setLoginProvider(undefined)} onSuccess={() => { setLoginProvider(undefined); if (cwd) invalidateCatalog(catalogCacheKey(cwd, preferences)); void useAppStore.getState().fetchModels(); }} />}
+            {modelsOpen && loginProvider && <ProviderLogin key={`${cwd}:${loginProvider}`} provider={loginProvider} options={{ cwd, binary: preferences.binary.trim() || "omp", extraArgs: splitExtraArgs(preferences.extraArgs) }} onBack={() => setLoginProvider(undefined)} onSuccess={completeLogin} />}
             {!modelsOpen && selection && <InspectorDetail selection={selection} data={inspector} onSelect={inspect} onClose={() => setInspection(undefined)} />}
             <div className={modelsOpen || selection ? "hidden" : "flex min-h-0 flex-1 flex-col overflow-hidden"}>
               <ChatView key={`chat-${activeRuntimeId}`} />
-              <Composer key={`composer-${activeRuntimeId}`} active={!modelsOpen && !settingsOpen && !selection} onOpenModels={() => setModelsOpen(true)} onOpenSettings={() => setSettingsOpen(true)} />
+              <Composer key={`composer-${activeRuntimeId}`} active={!modelsOpen && !settingsOpen && !selection} onOpenModels={openModels} onOpenSettings={() => setSettingsOpen(true)} onOpenUsage={openUsage} />
             </div>
             {terminalWorkspace === cwd && (
               <Suspense fallback={terminalVisible ? <div role="status" className="border-t p-3 text-xs text-muted-foreground">Loading terminal…</div> : null}>
@@ -108,7 +138,10 @@ export function AppShell() {
               </Suspense>
             )}
           </main>
-          {panelOpen && !modelsOpen && <RightPanel data={inspector} onInspect={inspect} onClose={() => setPanelOpen(false)} />}
+          {panelOpen && !modelsOpen && (
+            <RightPanel data={inspector} onInspect={inspect} onClose={closePanel}
+              planUsage={<PlanUsagePopover usage={usage} provider={inspector.session?.model?.provider} open={usageOpen} onOpenChange={setUsageOpen} />} />
+          )}
         </div>
         <StatusBar terminalOpen={terminalVisible} onToggleTerminal={toggleTerminal} />
         <Toasts />

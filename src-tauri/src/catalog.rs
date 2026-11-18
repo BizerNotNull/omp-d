@@ -1,4 +1,4 @@
-//! Read-only CLI catalog/config queries, independent of RPC discovery.
+//! Read-only CLI catalog, configuration, and usage queries.
 
 use std::collections::{BTreeMap, HashSet};
 use std::process::Stdio;
@@ -32,8 +32,8 @@ impl Drop for CatalogExtension {
     }
 }
 
-// Forward only catalog-relevant arguments, never session prompts or credentials.
-fn catalog_args(options: &StartOptions, models: bool) -> (Vec<String>, Option<String>) {
+// Forward only query-relevant arguments, never session prompts or credentials.
+fn catalog_args(options: &StartOptions, config: bool, extensions: bool) -> (Vec<String>, Option<String>) {
     let mut args = Vec::new();
     let mut profile = None;
     let extra = options.extra_args.as_deref().unwrap_or_default();
@@ -41,8 +41,7 @@ fn catalog_args(options: &StartOptions, models: bool) -> (Vec<String>, Option<St
     while index < extra.len() {
         let arg = &extra[index];
         let (flag, inline) = arg.split_once('=').map_or((arg.as_str(), None), |(k, v)| (k, Some(v)));
-        let takes_value = flag == "--profile"
-            || (models && matches!(flag, "--config" | "--extension" | "-e" | "--hook"));
+        let takes_value = matches!(flag, "--profile" | "--config" | "--extension" | "-e" | "--hook");
         if takes_value {
             let value = inline.map(str::to_string).or_else(|| {
                 index += 1;
@@ -51,12 +50,12 @@ fn catalog_args(options: &StartOptions, models: bool) -> (Vec<String>, Option<St
             if let Some(value) = value {
                 if flag == "--profile" {
                     profile = Some(value);
-                } else {
+                } else if (flag == "--config" && config) || (flag != "--config" && extensions) {
                     args.push(if flag == "--hook" { "--extension" } else { flag }.to_string());
                     args.push(value);
                 }
             }
-        } else if models && flag == "--no-extensions" {
+        } else if extensions && flag == "--no-extensions" {
             args.push(arg.clone());
         }
         index += 1;
@@ -71,7 +70,7 @@ async fn query(options: StartOptions, models: bool) -> Result<Value, String> {
         return Err("Catalog project path is not a directory".into());
     }
     let program = options.binary.as_deref().map(str::trim).filter(|s| !s.is_empty()).unwrap_or("omp");
-    let (extra, profile) = catalog_args(&options, models);
+    let (extra, profile) = catalog_args(&options, models, models);
     let mut command = Command::new(program);
     let extension = if models { Some(CatalogExtension::create()?) } else { None };
     if models {
@@ -149,4 +148,32 @@ pub async fn roles(options: StartOptions) -> Result<BTreeMap<String, String>, St
     let mut output = query(options, false).await?;
     let value = output.get_mut("value").map(Value::take).ok_or("Model role CLI returned no value")?;
     serde_json::from_value(value).map_err(|_| "Model role CLI returned invalid assignments".to_string())
+}
+
+pub async fn plan_usage(options: StartOptions) -> Result<Value, String> {
+    let program = options.binary.as_deref().map(str::trim).filter(|s| !s.is_empty()).unwrap_or("omp");
+    let (extra, profile) = catalog_args(&options, false, true);
+    let mut command = Command::new(program);
+    command.args(["usage", "--json", "--redact"]).args(extra)
+        .current_dir(&options.cwd).stdin(Stdio::null()).stdout(Stdio::piped())
+        .stderr(Stdio::null()).kill_on_drop(true);
+    if let Some(profile) = profile {
+        command.env("OMP_PROFILE", profile);
+    }
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000);
+    let output = tokio::time::timeout(Duration::from_secs(30), command.output())
+        .await.map_err(|_| "Usage query timed out after 30 seconds".to_string())?
+        .map_err(|_| "Cannot execute configured omp binary for usage".to_string())?;
+    if !output.status.success() {
+        return Err(format!("`omp usage --json` failed ({})", output.status));
+    }
+    let mut result: Value = serde_json::from_slice(&output.stdout)
+        .map_err(|_| "Usage CLI returned invalid JSON".to_string())?;
+    let reports = result.get_mut("reports").filter(|value| value.is_array())
+        .map(Value::take).ok_or("Usage CLI returned no reports array")?;
+    Ok(serde_json::json!({
+        "reports": reports,
+        "accountsWithoutUsage": result.get_mut("accountsWithoutUsage").map(Value::take)
+    }))
 }

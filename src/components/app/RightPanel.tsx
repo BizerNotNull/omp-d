@@ -1,9 +1,9 @@
-import { useState } from "react";
-import { Check, ChevronRight, Circle, CircleAlert, CircleDot, LoaderCircle, X } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { Check, ChevronRight, ChevronUp, Circle, CircleAlert, CircleDot, LoaderCircle, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatCost, formatTokens } from "@/lib/omp/format";
 import type { ChangedFile, InspectorData, InspectorSelection } from "@/lib/omp/inspector-data";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
 
 export function InspectorStatus({ status }: { status: string }) {
   if (status === "running" || status === "in_progress") return <LoaderCircle aria-label="Running" className="size-3.5 shrink-0 animate-spin text-amber-600 dark:text-amber-400 motion-reduce:animate-none" />;
@@ -24,7 +24,7 @@ export function FileChangeRow({ file, onClick }: { file: ChangedFile; onClick: (
   </button>;
 }
 
-export function RightPanel({ data, onInspect, onClose }: { data: InspectorData; onInspect: (selection: InspectorSelection) => void; onClose: () => void }) {
+export function RightPanel({ data, planUsage, onInspect, onClose }: { data: InspectorData; planUsage: ReactNode; onInspect: (selection: InspectorSelection) => void; onClose: () => void }) {
   const { session, tasks, activeTask, agents, files, state, activity } = data;
   const [changesExpanded, setChangesExpanded] = useState(false);
   const completed = tasks.filter((task) => task.status === "completed").length;
@@ -63,20 +63,25 @@ export function RightPanel({ data, onInspect, onClose }: { data: InspectorData; 
         </section>}
         {data.gitError && <button type="button" onClick={() => onInspect({ kind: "changes" })} className="my-3 flex items-center gap-2 px-1 text-left text-[11px] text-destructive"><CircleAlert className="size-3.5" />Cannot read Git changes<ChevronRight className="size-3" /></button>}
       </div>
-      {(usage || data.stats) && <Tooltip>
-        <TooltipTrigger render={<div tabIndex={0} aria-label="Context resources" />} className="shrink-0 border-t px-4 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-          <span className="flex items-center justify-between text-[11px]"><span className="text-muted-foreground">Context</span><span className="tabular-nums">{usage ? `${Math.max(0, 100 - usage.percent).toFixed(0)}% left` : `${formatTokens(data.stats?.tokens.total)} tokens`}</span></span>
-          {usage && <span role="progressbar" aria-label="Context used" aria-valuenow={Math.round(usage.percent)} aria-valuemin={0} aria-valuemax={100} className="mt-2 block h-1 overflow-hidden rounded-full bg-border"><span className={cn("block h-full rounded-full", usage.percent >= 90 ? "bg-destructive" : usage.percent >= 75 ? "bg-amber-600 dark:bg-amber-400" : "bg-muted-foreground/50")} style={{ width: `${Math.max(0, Math.min(100, usage.percent))}%` }} /></span>}
-        </TooltipTrigger>
-        <TooltipContent side="top" align="end" sideOffset={8} className="block w-80 max-w-[calc(100vw-2rem)] px-4 py-3">
-          <p className="mb-2 font-medium">Resources</p>
+      {planUsage}
+      {(usage || data.stats) && <Popover>
+        <PopoverTrigger type="button" className="w-full shrink-0 border-t px-4 py-3 text-left hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+          <span className="flex items-center gap-2 text-[11px]">
+            <span className="text-muted-foreground">Context</span>
+            <span className="ml-auto tabular-nums">{usage ? `${Math.max(0, 100 - usage.percent).toFixed(0)}% left` : `${formatTokens(data.stats?.tokens.total)} tokens`}</span>
+            <ChevronUp aria-hidden="true" className="size-3 shrink-0 text-muted-foreground" />
+          </span>
+          {usage && <span aria-hidden="true" className="mt-2 block h-1 overflow-hidden rounded-full bg-border"><span className={cn("block h-full rounded-full", usage.percent >= 90 ? "bg-destructive" : usage.percent >= 75 ? "bg-amber-600 dark:bg-amber-400" : "bg-muted-foreground/50")} style={{ width: `${Math.max(0, Math.min(100, usage.percent))}%` }} /></span>}
+        </PopoverTrigger>
+        <PopoverContent side="top" align="end" sideOffset={8} className="w-80 max-w-[calc(100vw-1rem)] overflow-auto overscroll-contain p-3 text-xs motion-reduce:animate-none" style={{ maxHeight: "min(28rem, var(--available-height))" }}>
+          <PopoverTitle className="border-b border-border pb-2">Context resources</PopoverTitle>
           <dl className="space-y-2">
             {usage && <><Resource label="Context used" value={`${formatTokens(usage.tokens)} / ${formatTokens(usage.contextWindow)} tokens (${usage.percent.toFixed(1)}%)`} /><Resource label="Context remaining" value={`${formatTokens(Math.max(0, usage.contextWindow - usage.tokens))} tokens`} /></>}
             {data.stats && <><Resource label="Input tokens" value={formatTokens(data.stats.tokens.input)} /><Resource label="Output tokens" value={formatTokens(data.stats.tokens.output)} /><Resource label="Reasoning tokens" value={formatTokens(data.stats.tokens.reasoning)} /><Resource label="Cache read / write" value={`${formatTokens(data.stats.tokens.cacheRead)} / ${formatTokens(data.stats.tokens.cacheWrite)}`} /><Resource label="Estimated cost" value={formatCost(data.stats.cost)} /></>}
             {session?.autoCompactionEnabled && <Resource label="Auto compaction" value="Enabled" />}
           </dl>
-        </TooltipContent>
-      </Tooltip>}
+        </PopoverContent>
+      </Popover>}
     </aside>
   );
 }

@@ -43,6 +43,11 @@ async fn model_roles(options: StartOptions) -> Result<std::collections::BTreeMap
 }
 
 #[tauri::command]
+async fn plan_usage(options: StartOptions) -> Result<serde_json::Value, String> {
+    catalog::plan_usage(options).await
+}
+
+#[tauri::command]
 async fn native_settings(options: StartOptions) -> Result<settings::Settings, String> {
     settings::native_settings(options).await
 }
@@ -142,6 +147,7 @@ pub fn run() {
                 rpc_send,
                 model_catalog,
                 model_roles,
+                plan_usage,
                 native_settings,
                 native_setting_write,
                 auth_start,

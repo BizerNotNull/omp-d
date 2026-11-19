@@ -16,7 +16,7 @@ import { SettingsDialog } from "./SettingsDialog";
 import { catalogCacheKey, invalidateCatalog, splitExtraArgs } from "@/lib/omp/model-catalog";
 import { usePlanUsage } from "@/lib/omp/plan-usage";
 import { useAppStore } from "@/lib/omp/store";
-import { useSessionNavigation } from "@/lib/omp/navigation";
+import { sessionPathKey, useSessionNavigation } from "@/lib/omp/navigation";
 import { InspectorDetail } from "./InspectorDetail";
 import { useInspectorData, type InspectorSelection } from "@/lib/omp/inspector-data";
 
@@ -28,8 +28,12 @@ export function AppShell() {
   const activeRuntimeId = useAppStore((state) => state.activeRuntimeId);
   const hydrating = useAppStore((state) => state.hydrating);
   const branching = useAppStore((state) => state.branching);
-  const switchingWorkspace = useSessionNavigation((state) => Boolean(state.switchingProject || state.switchingWorktree));
-  const conversationLoading = switchingWorkspace || hydrating || branching;
+  const switchingProject = useSessionNavigation((state) => state.switchingProject);
+  const switchingWorktree = useSessionNavigation((state) => state.switchingWorktree);
+  const workspaceKey = sessionPathKey(cwd);
+  const workspacePending = switchingWorktree ? sessionPathKey(switchingWorktree) !== workspaceKey : Boolean(switchingProject);
+  const inspectorCwd = switchingWorktree ?? (switchingProject ? undefined : cwd);
+  const conversationLoading = workspacePending || hydrating || branching;
   const theme = useAppStore((state) => state.preferences.theme);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [modelsOpen, setModelsOpen] = useState(false);
@@ -38,15 +42,24 @@ export function AppShell() {
   const [panelOpen, setPanelOpen] = useState(true);
   const [usageOpen, setUsageOpen] = useState(false);
   const [authRevision, setAuthRevision] = useState(0);
-  const usage = usePlanUsage(cwd, preferences.binary, preferences.extraArgs, authRevision, usageOpen);
+  const usage = usePlanUsage(inspectorCwd, preferences.binary, preferences.extraArgs, authRevision, usageOpen);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalWorkspace, setTerminalWorkspace] = useState<string>();
   const terminalVisible = terminalOpen && terminalWorkspace === cwd;
-  const inspector = useInspectorData();
-  const [inspection, setInspection] = useState<{ runtime: number; session?: string; selection: InspectorSelection }>();
-  const selection = inspection?.runtime === activeRuntimeId && inspection.session === inspector.session?.sessionId ? inspection.selection : undefined;
+  const inspector = useInspectorData(inspectorCwd, workspacePending);
+  const inspectorWorkspace = sessionPathKey(inspectorCwd);
+  const [inspection, setInspection] = useState<{ runtime: number; workspace: string; session?: string; selection: InspectorSelection }>();
+  let selection: InspectorSelection | undefined;
+  if (inspectorCwd && inspection?.workspace === inspectorWorkspace) {
+    const kind = inspection.selection.kind;
+    if (kind === "diff" || kind === "changes" ||
+      (inspection.runtime === activeRuntimeId && !inspector.sessionLoading && inspection.session === inspector.session?.sessionId
+        && (kind !== "agent" || !inspector.transcriptLoading))) {
+      selection = inspection.selection;
+    }
+  }
   function inspect(value: InspectorSelection) {
-    setInspection({ runtime: activeRuntimeId, session: inspector.session?.sessionId, selection: value });
+    setInspection({ runtime: activeRuntimeId, workspace: inspectorWorkspace, session: inspector.session?.sessionId, selection: value });
     if (window.innerWidth < 1024) setPanelOpen(false);
   }
 
@@ -134,8 +147,8 @@ export function AppShell() {
             )}
             {modelsOpen && <div className={loginProvider ? "hidden" : "flex min-h-0 flex-1 flex-col"}><ModelPicker active={!loginProvider} onClose={() => setModelsOpen(false)} onLoginRequest={setLoginProvider} /></div>}
             {modelsOpen && loginProvider && <ProviderLogin key={`${cwd}:${loginProvider}`} provider={loginProvider} options={{ cwd, binary: preferences.binary.trim() || "omp", extraArgs: splitExtraArgs(preferences.extraArgs) }} onBack={() => setLoginProvider(undefined)} onSuccess={completeLogin} />}
-            {!modelsOpen && conversationLoading && <div role="status" className="flex min-h-0 flex-1 items-center justify-center gap-2 text-sm text-muted-foreground"><LoaderCircle aria-hidden="true" className="size-4 animate-spin motion-reduce:animate-none" />{branching ? "Loading conversation branch…" : "Loading conversation…"}</div>}
-            {!modelsOpen && !conversationLoading && selection && <InspectorDetail selection={selection} data={inspector} onSelect={inspect} onClose={() => setInspection(undefined)} />}
+            {!modelsOpen && conversationLoading && !selection && <div role="status" className="flex min-h-0 flex-1 items-center justify-center gap-2 text-sm text-muted-foreground"><LoaderCircle aria-hidden="true" className="size-4 animate-spin motion-reduce:animate-none" />{branching ? "Loading conversation branch…" : "Loading conversation…"}</div>}
+            {!modelsOpen && selection && <InspectorDetail selection={selection} data={inspector} onSelect={inspect} onClose={() => setInspection(undefined)} />}
             <div className={modelsOpen || selection || conversationLoading ? "hidden" : "@container flex min-h-0 flex-1 flex-col overflow-hidden"}>
               <ChatView key={`chat-${activeRuntimeId}`} />
               <Composer key={`composer-${activeRuntimeId}`} active={!modelsOpen && !settingsOpen && !selection && !conversationLoading} onOpenModels={openModels} onOpenSettings={() => setSettingsOpen(true)} onOpenUsage={openUsage} />
@@ -146,9 +159,9 @@ export function AppShell() {
               </Suspense>
             )}
           </main>
-          {panelOpen && !modelsOpen && !conversationLoading && (
+          {panelOpen && !modelsOpen && (
             <RightPanel data={inspector} onInspect={inspect} onClose={closePanel}
-              planUsage={<PlanUsagePopover usage={usage} provider={inspector.session?.model?.provider} open={usageOpen} onOpenChange={setUsageOpen} />} />
+              planUsage={inspectorCwd && <PlanUsagePopover usage={usage} provider={inspector.session?.model?.provider} open={usageOpen} onOpenChange={setUsageOpen} />} />
           )}
         </div>
         <StatusBar terminalOpen={terminalVisible} onToggleTerminal={toggleTerminal} />

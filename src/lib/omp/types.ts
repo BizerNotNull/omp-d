@@ -520,6 +520,20 @@ export type ExtensionUIResponse =
       answers: Array<{ id: string; selectedOptions: string[]; customInput?: string }>;
     };
 
+export interface BtwTurn {
+  question: string;
+  images?: readonly ImageContent[];
+  answer: string;
+  status: "running" | "complete" | "cancelled" | "error" | "interrupted";
+  error?: string;
+}
+
+export interface BtwRecord extends BtwTurn {
+  id: string;
+  createdAt: number;
+  followUps?: readonly BtwTurn[];
+}
+
 /* ----------------------------------------------------------- commands sent */
 
 export interface RpcCommand {

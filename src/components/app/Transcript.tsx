@@ -43,6 +43,7 @@ function SessionTranscript({
   messages: AgentMessage[];
   pending: Array<{ messageId: string; message: AgentMessage }>;
 }) {
+  const promptEcho = useAppStore((state) => state.promptEcho);
   const toolRuns = useAppStore((state) => state.toolRuns);
   const messageBranches = useAppStore((state) => state.messageBranches);
   const busy = useAppStore((state) => state.busy);
@@ -90,6 +91,9 @@ function SessionTranscript({
     }
     return <SystemNote key={key} message={message} />;
   });
+  if (promptEcho) {
+    items.splice(messages.length, 0, <UserBubble key={promptEcho.id} message={promptEcho.message} disabled />);
+  }
 
   return (
     <div className="flex flex-col gap-2">
@@ -170,7 +174,7 @@ function UserBubble({ message, branch, disabled }: { message: AgentMessage; bran
   return (
     <article
       aria-label={agentAttributed ? "Agent message" : "User message"}
-      className={cn("anim-in ml-auto flex min-w-0 max-w-full flex-col items-end gap-1 py-1 sm:max-w-[min(82%,48rem)]", editing ? "w-96" : "w-fit")}
+      className={cn("ml-auto flex min-w-0 max-w-full flex-col items-end gap-1 py-1 sm:max-w-[min(82%,48rem)]", editing ? "w-96" : "w-fit")}
     >
       {agentAttributed && <span className="text-[10px] font-medium text-muted-foreground">Agent</span>}
       {images.length > 0 && (

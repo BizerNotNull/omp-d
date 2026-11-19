@@ -40,10 +40,11 @@ bun tauri dev
 
 The first launch opens a folder picker. That directory becomes the agent's `--cwd` and its own session bucket. For development, `OMPD_CWD=/path/to/project` skips the picker on first launch.
 
-`bun tauri dev` disables Tauri's native file watcher so `/wt <branch>` can
-rewrite the source checkout without closing the window and terminating its
-agent. Frontend hot reload remains enabled; restart the development app after
-Rust changes. To opt into native auto-restarts, run `bunx tauri dev` directly.
+`bun tauri dev` disables the Tauri and Vite file watchers. When `/wt <branch>`
+rewrites the source checkout, the desktop window and its agent stay running;
+the app updates workspace data in place. Restart the development app after
+source changes. Use `bunx tauri dev` to opt into both watchers, or `bun run dev`
+for frontend-only hot reload.
 
 ## Build
 

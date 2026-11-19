@@ -27,6 +27,7 @@ export function Sidebar() {
   const query = useSessionNavigation((state) => state.query);
   const listing = useSessionNavigation((state) => state.sessionListing);
   const loading = useSessionNavigation((state) => state.sessionsLoading);
+  const replacingSessions = useSessionNavigation((state) => state.replacingSessions);
   const loadingMore = useSessionNavigation((state) => state.loadingMore);
   const error = useSessionNavigation((state) => state.error);
   const pins = useSessionNavigation((state) => state.pinnedSessions);
@@ -41,7 +42,7 @@ export function Sidebar() {
   const switchingProject = useSessionNavigation((state) => state.switchingProject);
   const switchingWorktree = useSessionNavigation((state) => state.switchingWorktree);
   const switchingWorkspace = Boolean(switchingProject || switchingWorktree);
-  const replacing = switchingWorkspace || (loading && !loadingMore);
+  const replacing = Boolean(switchingProject && !switchingWorktree) || replacingSessions;
   const conversationPending = switchingWorkspace || hydrating || branching;
   const scrollRef = useRef<HTMLDivElement>(null);
   const restoration = useRef({ key: "", top: 0, pending: true });
@@ -169,10 +170,10 @@ export function Sidebar() {
             </div>;
           })}
         </div>
-        {!rows.length && !replacing && !loading && !error && <p className="px-2 py-8 text-center text-[11px] text-muted-foreground">{query ? "No matching sessions." : view === "running" ? "No Agent tasks running." : view === "pinned" ? "Pin a session to save it here." : "No sessions in this view."}</p>}
+        {!rows.length && !replacing && !loadingMore && !error && <p className="px-2 py-8 text-center text-[11px] text-muted-foreground">{query ? "No matching sessions." : view === "running" ? "No Agent tasks running." : view === "pinned" ? "Pin a session to save it here." : "No sessions in this view."}</p>}
         {!replacing && error && <div role="alert" className="p-2 text-[11px] text-destructive">{error}<button type="button" className="mt-2 block underline" onClick={() => void refresh()}>Retry loading sessions</button></div>}
         {(replacing || loadingMore) && <p role="status" className="flex items-center justify-center gap-2 p-3 text-[11px] text-muted-foreground"><LoaderCircle aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />{replacing ? "Loading sessions…" : "Loading older sessions…"}</p>}
-        {!replacing && !loading && !error && listing?.nextCursor && <button type="button" onClick={() => void loadMore()} className="w-full p-3 text-[10px] text-muted-foreground hover:text-foreground">Load older sessions</button>}
+        {!replacing && !loadingMore && !error && listing?.nextCursor && <button type="button" disabled={loading} onClick={() => void loadMore()} className="w-full p-3 text-[10px] text-muted-foreground hover:text-foreground">Load older sessions</button>}
       </div>
       <div className="shrink-0 border-t border-sidebar-border px-3 py-2.5 text-[10px] text-muted-foreground"><span className={cn("mr-2 inline-block size-1.5 rounded-full", status === "ready" ? "bg-emerald-500" : status === "error" ? "bg-destructive" : "bg-muted-foreground")} />{status === "ready" ? "connected" : status === "starting" ? "starting omp" : status === "error" ? "connection error" : "disconnected"}</div>
     </aside>

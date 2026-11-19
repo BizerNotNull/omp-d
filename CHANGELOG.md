@@ -2,14 +2,15 @@
 
 ## Unreleased
 
-### Changed
-- The desktop app defaults to the light theme when no theme preference is saved
-- The main conversation drops message avatars and the “You” label. The transcript and composer share a wider layout, with a separate line-width limit for reply prose
+### Added
+- `/btw` side questions stream answers in a separate panel without touching the main transcript or queues, with follow-up support and scroll-back through prior questions
+- The side-question panel can stop an active question or close the panel from its top-right button
 
-### Fixed
-- Session and workspace switches, model catalog refreshes, plan usage, and native settings reloads show a spinner instead of previous data while loading. Session pagination keeps already-loaded rows visible
-- Reopening a saved session through another Windows path spelling reuses its existing process and sidebar row
-- Reloading the desktop renderer now stops its previous agent processes before restoring the saved session, so leftover write locks no longer cause duplicate sessions
+### Changed
+- Chat drafts clear as soon as a message is sent and are restored on failure when the composer has not been edited
+- Sent messages appear in the transcript immediately and are deduplicated once omp confirms them
+- Project and Worktree switches show the conversation as soon as it is ready while sidebar history loads separately
+- Session listing keeps hidden sessions reachable when a search query or cached summary is requested
 ## 0.1.0 — 2026-11-06
 
 Initial desktop client for Oh My Pi.

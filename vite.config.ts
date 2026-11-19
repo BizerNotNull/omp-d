@@ -24,7 +24,7 @@ export default defineConfig(() => ({
           port: 1421,
         }
       : undefined,
-    watch: {
+    watch: process.env.OMPD_DEV_NO_WATCH === "1" ? null : {
       ignored: ["**/src-tauri/**"],
     },
   },

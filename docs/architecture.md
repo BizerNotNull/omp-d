@@ -236,8 +236,10 @@ the JSONL file; it is not restricted to the summary preview.
 
 Native discovery uses a two-second, per-directory single-flight cache (up to 32
 directories); Git errors are not cached. Branch labels and Worktree registrations
-can therefore lag external changes by up to two seconds. Session files are still
-enumerated on every query, so additions and deletions do not wait for that TTL.
+can therefore lag external changes by up to two seconds. Project selection asks
+for directory metadata with `limit: 0`, without scanning session files. History
+pages enumerate their buckets on each request; lookups with explicit session
+paths check only those files inside the relevant buckets.
 An in-memory LRU cache retains at most 4096 parsed summaries, visibility checks,
 and the last full-text query result per file. Entries are validated against file
 size and full-resolution modification/creation times, not the millisecond page
@@ -260,6 +262,9 @@ that session's directory and opens the file with `switch_session`. It never
 sends a switch command to another session's running child. Selecting a Worktree
 filter restores that Worktree's last conversation; selecting All Worktrees only
 changes the list. Opening a session never changes the filter.
+Workspace selection starts a sidebar history request separately from session
+startup. Runtime activation and hydration do not repeat that request or wait
+for it before showing the conversation.
 
 Session lookups and sidebar rows use the same path key, including for Windows
 verbatim drive and UNC paths. Equivalent spellings reuse the same runtime

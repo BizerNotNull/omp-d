@@ -35,6 +35,7 @@ export interface SessionNavigationState extends NavigationPreferences {
   repositoryCwd?: string;
   sessionListing?: SessionListing;
   sessionsLoading: boolean;
+  replacingSessions: boolean;
   loadingMore: boolean;
   error?: string;
   switchingProject?: string;
@@ -118,6 +119,7 @@ function activateFilters(patch: Partial<NavigationPreferences & Pick<SessionNavi
     ...patch,
     sessionListing: metadata ? { ...metadata, sessions: [], nextCursor: null } : undefined,
     sessionsLoading: Boolean(state.repositoryCwd),
+    replacingSessions: Boolean(state.repositoryCwd),
     loadingMore: false,
     error: undefined,
   });
@@ -136,7 +138,11 @@ async function fetchPage(more: boolean): Promise<void> {
   if (more && (!cached?.nextCursor || state.sessionsLoading)) return;
   const request = (requests.get(key) ?? 0) + 1;
   requests.set(key, request);
-  useSessionNavigation.setState({ sessionsLoading: true, loadingMore: more, error: undefined });
+  // Only a listing already displayed for these filters can stay on screen.
+  useSessionNavigation.setState({
+    sessionsLoading: true, replacingSessions: !more && (!cached || state.sessionListing !== cached),
+    loadingMore: more, error: undefined,
+  });
   try {
     const sessions = new Map<string, SessionSummary>();
     if (more) for (const session of cached?.sessions ?? []) sessions.set(sessionPathKey(session.path), session);
@@ -171,20 +177,24 @@ async function fetchPage(more: boolean): Promise<void> {
       const directories = new Set(result.directories.map((item) => sessionPathKey(item.cwd)));
       const lastCwd = current.recentWorktrees.find((cwd) => directories.has(sessionPathKey(cwd))) ?? result.repositoryCwd;
       useSessionNavigation.setState({
-        repositoryCwd: result.repositoryCwd, sessionListing: listing, sessionsLoading: false, loadingMore: false,
+        repositoryCwd: result.repositoryCwd, sessionListing: listing,
+        sessionsLoading: false, replacingSessions: false, loadingMore: false,
         recentProjects: [result.repositoryCwd, ...current.recentProjects.filter((cwd) => sessionPathKey(cwd) !== root && !directories.has(sessionPathKey(cwd)))].slice(0, 30),
         lastWorktreeByProject: { ...current.lastWorktreeByProject, [root]: lastCwd },
       });
     }
   } catch (error) {
     if (requests.get(key) === request && cacheKey(useSessionNavigation.getState()) === key) {
-      useSessionNavigation.setState({ sessionsLoading: false, loadingMore: false, error: error instanceof Error ? error.message : String(error) });
+      useSessionNavigation.setState({
+        sessionsLoading: false, replacingSessions: false, loadingMore: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 }
 
 export const useSessionNavigation = create<SessionNavigationState>()((set, get) => ({
-  ...preferences(), sessionsLoading: false, loadingMore: false,
+  ...preferences(), sessionsLoading: false, replacingSessions: false, loadingMore: false,
   setView: (view) => { if (view !== get().view) activateFilters({ view }); },
   setWorktreeScope: (worktreeScope) => { ++selectionRequest; activateFilters({ worktreeScope }); },
   setQuery: (query) => { if (query !== get().query) activateFilters({ query }); },
@@ -199,7 +209,7 @@ export const useSessionNavigation = create<SessionNavigationState>()((set, get) 
     set({ switchingProject: cwd, error: undefined });
     try {
       // Resolve before changing context so an unavailable folder leaves the current project usable.
-      const listing = await invoke<SessionListing>("list_sessions", { cwd, limit: 1 });
+      const listing = await invoke<SessionListing>("list_sessions", { cwd, limit: 0 });
       if (request !== selectionRequest) return;
       const root = listing.repositoryCwd;
       const remembered = get().lastWorktreeByProject[sessionPathKey(root)];
@@ -209,7 +219,7 @@ export const useSessionNavigation = create<SessionNavigationState>()((set, get) 
     } catch (error) {
       set({ error: error instanceof Error ? error.message : String(error) });
     } finally {
-      set({ switchingProject: undefined });
+      set({ switchingProject: undefined, switchingWorktree: undefined });
     }
   },
   selectWorktree: async (scope) => {
@@ -237,7 +247,8 @@ export const useSessionNavigation = create<SessionNavigationState>()((set, get) 
     } catch (error) {
       if (request === selectionRequest) set({ error: error instanceof Error ? error.message : String(error) });
     } finally {
-      set({ switchingWorktree: undefined });
+      // Project switches clear both flags together so the resolved worktree stays visible.
+      if (!get().switchingProject) set({ switchingWorktree: undefined });
     }
   },
 }));

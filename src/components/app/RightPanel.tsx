@@ -25,12 +25,12 @@ export function FileChangeRow({ file, onClick }: { file: ChangedFile; onClick: (
 }
 
 export function RightPanel({ data, planUsage, onInspect, onClose }: { data: InspectorData; planUsage: ReactNode; onInspect: (selection: InspectorSelection) => void; onClose: () => void }) {
-  const { session, tasks, activeTask, agents, files, state, activity } = data;
+  const { session, tasks, activeTask, agents, files, state, activity, sessionLoading, transcriptLoading } = data;
   const [changesExpanded, setChangesExpanded] = useState(false);
   const completed = tasks.filter((task) => task.status === "completed").length;
   const activeAgents = agents.filter((agent) => agent.status !== "success");
   const finishedAgents = agents.length - activeAgents.length;
-  const hasExecution = Boolean(session || data.runs.length || data.error);
+  const hasExecution = !sessionLoading && Boolean(session || data.runs.length || data.error);
   const usage = session?.contextUsage;
   const label = state === "error" ? "Needs attention" : state === "waiting" ? "Waiting" : state === "running" ? "Running" : "Completed";
   return (
@@ -41,6 +41,7 @@ export function RightPanel({ data, planUsage, onInspect, onClose }: { data: Insp
         <button type="button" aria-label="Close Inspector" onClick={onClose} className="rounded p-1 text-muted-foreground hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring"><X className="size-3.5" /></button>
       </header>
       <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-3">
+        {sessionLoading && <p role="status" className="flex items-center gap-2 px-1 py-4 text-[11px] text-muted-foreground"><LoaderCircle aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />Loading session activity…</p>}
         {hasExecution && <section aria-label="Execution" className="border-b py-4">
           <h3 className="mb-2 px-1 text-[11px] font-medium text-muted-foreground">Execution</h3>
           {session?.goal?.goal.objective && <button type="button" onClick={() => onInspect({ kind: "tasks" })} className="mb-2 w-full rounded px-1 text-left text-xs leading-5 hover:text-muted-foreground" title={session.goal.goal.objective}><span className="line-clamp-2">{session.goal.goal.objective}</span></button>}
@@ -49,12 +50,16 @@ export function RightPanel({ data, planUsage, onInspect, onClose }: { data: Insp
             {activeTask && <span className="mb-2 line-clamp-2 text-xs leading-5">{activeTask.content}</span>}
             <span role="progressbar" aria-label="Task progress" aria-valuenow={completed} aria-valuemin={0} aria-valuemax={tasks.length} className="block h-0.5 overflow-hidden rounded-full bg-border"><span className="block h-full bg-foreground/40" style={{ width: `${completed / tasks.length * 100}%` }} /></span>
           </button>}
-          <div className={cn("flex flex-col gap-0.5", state === "completed" && "inspector-settled")}>
-            {activeAgents.filter((agent) => agent.status === "error" || agent.status === "waiting").map((agent) => <AgentRow key={agent.id} name={agent.name} status={agent.status} snapshot={agent.snapshot} activity={agent.activity} onClick={() => onInspect({ kind: "agent", id: agent.id })} />)}
-            <AgentRow name="Main" status={data.mainState} activity={activity} onClick={() => onInspect({ kind: "agent", id: "main" })} />
-            {activeAgents.filter((agent) => agent.status !== "error" && agent.status !== "waiting").map((agent) => <AgentRow key={agent.id} name={agent.name} status={agent.status} snapshot={agent.snapshot} activity={agent.activity} onClick={() => onInspect({ kind: "agent", id: agent.id })} />)}
-          </div>
-          {finishedAgents > 0 && <button type="button" onClick={() => onInspect({ kind: "agent", id: "all" })} className="mt-1 flex w-full items-center gap-2 rounded px-2 py-1.5 text-[11px] text-muted-foreground hover:bg-sidebar-accent"><Check className="size-3" />{finishedAgents} {finishedAgents === 1 ? "agent" : "agents"} completed<ChevronRight className="ml-auto size-3" /></button>}
+          {transcriptLoading ? (
+            <p role="status" className="flex items-center gap-2 px-1 py-2 text-[11px] text-muted-foreground"><LoaderCircle aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />Loading agent activity…</p>
+          ) : <>
+            <div className={cn("flex flex-col gap-0.5", state === "completed" && "inspector-settled")}>
+              {activeAgents.filter((agent) => agent.status === "error" || agent.status === "waiting").map((agent) => <AgentRow key={agent.id} name={agent.name} status={agent.status} snapshot={agent.snapshot} activity={agent.activity} onClick={() => onInspect({ kind: "agent", id: agent.id })} />)}
+              <AgentRow name="Main" status={data.mainState} activity={activity} onClick={() => onInspect({ kind: "agent", id: "main" })} />
+              {activeAgents.filter((agent) => agent.status !== "error" && agent.status !== "waiting").map((agent) => <AgentRow key={agent.id} name={agent.name} status={agent.status} snapshot={agent.snapshot} activity={agent.activity} onClick={() => onInspect({ kind: "agent", id: agent.id })} />)}
+            </div>
+            {finishedAgents > 0 && <button type="button" onClick={() => onInspect({ kind: "agent", id: "all" })} className="mt-1 flex w-full items-center gap-2 rounded px-2 py-1.5 text-[11px] text-muted-foreground hover:bg-sidebar-accent"><Check className="size-3" />{finishedAgents} {finishedAgents === 1 ? "agent" : "agents"} completed<ChevronRight className="ml-auto size-3" /></button>}
+          </>}
         </section>}
         {data.gitLoading && <p role="status" className="flex items-center gap-2 px-1 py-4 text-[11px] text-muted-foreground"><LoaderCircle aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />Loading Git changes…</p>}
         {files && files.length > 0 && <section aria-label="Changes" className="py-4">

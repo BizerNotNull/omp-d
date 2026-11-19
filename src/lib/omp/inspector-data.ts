@@ -12,11 +12,15 @@ export interface ChangedFile {
 }
 export type InspectorSelection = { kind: "tasks" | "changes" } | { kind: "agent"; id: string } | { kind: "diff"; path: string };
 
-export function useInspectorData() {
+export function useInspectorData(cwd: string | undefined, workspacePending: boolean) {
   const session = useAppStore((state) => state.session);
   const stats = useAppStore((state) => state.stats);
-  const cwd = useAppStore((state) => state.cwd);
+  const hydrating = useAppStore((state) => state.hydrating);
+  const branching = useAppStore((state) => state.branching);
+  const sessionLoading = workspacePending || branching || (hydrating && !session);
+  const transcriptLoading = workspacePending || branching || hydrating;
   const busy = useAppStore((state) => state.busy);
+  const gitBusy = !workspacePending && busy;
   const status = useAppStore((state) => state.status);
   const error = useAppStore((state) => state.error);
   const dialogs = useAppStore((state) => state.dialogs);
@@ -38,22 +42,23 @@ export function useInspectorData() {
       querying = true;
       try {
         const result = await invoke<{ root: string; files: ChangedFile[] } | null>("get_git_changes", { cwd });
-        if (!cancelled) setGit({ cwd: cwd!, busy, root: result?.root, files: result?.files });
+        if (!cancelled) setGit({ cwd: cwd!, busy: gitBusy, root: result?.root, files: result?.files });
       } catch (cause) {
-        if (!cancelled) setGit({ cwd: cwd!, busy, error: String(cause) });
+        if (!cancelled) setGit({ cwd: cwd!, busy: gitBusy, error: String(cause) });
       } finally { querying = false; }
     }
     void refresh();
     const interval = window.setInterval(() => void refresh(), 5000);
     window.addEventListener("focus", refresh);
     return () => { cancelled = true; window.clearInterval(interval); window.removeEventListener("focus", refresh); };
-  }, [cwd, busy]);
+  }, [cwd, gitBusy]);
   const runs = useMemo(() => Object.values(toolRuns).sort((a, b) => b.startedAt - a.startedAt), [toolRuns]);
-  const agents = useMemo(() => projectInspectorAgents(toolRuns, messages, subagents, subagentMessages), [toolRuns, messages, subagents, subagentMessages]);
-  const touched = useMemo(() => sessionChangedPaths(messages, toolRuns), [messages, toolRuns]);
-  const currentGit = git?.cwd === cwd && git?.busy === busy ? git : undefined;
+  const agents = useMemo(() => transcriptLoading ? [] : projectInspectorAgents(toolRuns, messages, subagents, subagentMessages), [transcriptLoading, toolRuns, messages, subagents, subagentMessages]);
+  const touched = useMemo(() => transcriptLoading ? undefined : sessionChangedPaths(messages, toolRuns), [transcriptLoading, messages, toolRuns]);
+  const currentGit = git?.cwd === cwd && git?.busy === gitBusy ? git : undefined;
   const files = currentGit?.files;
   const sessionFiles = useMemo(() => {
+    if (!touched || !files) return;
     const normalize = (path: string) => {
       const value = path.replace(/\\/g, "/").replace(/^\.\/|\/*$/g, "");
       return /^[a-z]:\//i.test(value) || value.startsWith("//") ? value.toLowerCase() : value;
@@ -64,7 +69,7 @@ export function useInspectorData() {
       const value = normalize(path);
       return /^(?:[a-z]:\/|\/)/i.test(value) ? value : `${workspace}/${value}`;
     }));
-    return files?.filter((file) => absolutePaths.has(normalize(`${root}/${file.path}`)));
+    return files.filter((file) => absolutePaths.has(normalize(`${root}/${file.path}`)));
   }, [files, touched, currentGit?.root, cwd]);
   const tasks = session?.todoPhases.flatMap((phase) => phase.tasks) ?? [];
   const activeTask = tasks.find((task) => task.status === "blocked") ?? tasks.find((task) => task.status === "in_progress") ?? tasks.find((task) => task.status === "pending");
@@ -78,7 +83,13 @@ export function useInspectorData() {
     : mainState === "waiting" || activeTask?.status === "blocked" || liveAgents.some((agent) => agent.status === "waiting") ? "waiting"
     : mainState === "running" || liveAgents.some((agent) => agent.status === "running") ? "running" : "completed";
   const activity = error ?? (dialogs.length ? "Your response is required" : failed ? `${failed.toolName} failed` : running[0] ? describeRun(running[0]) : session?.isCompacting ? "Compacting context" : busy ? "Generating response" : session?.hasPendingAsyncWork ? "Waiting for background work" : "Turn completed");
-  return { session, stats, cwd, runs, messages, agents, tasks, activeTask, files, sessionFiles, gitLoading: Boolean(cwd && !currentGit), gitError: currentGit?.error, state, mainState, activity, error, notices, widgets, statusMarks, refreshSubagentMessages };
+  return {
+    session: sessionLoading ? undefined : session,
+    stats: workspacePending || branching ? undefined : stats,
+    cwd, runs, messages, agents, tasks, activeTask, files, sessionFiles, sessionLoading, transcriptLoading,
+    gitLoading: cwd ? !currentGit : workspacePending, gitError: currentGit?.error,
+    state, mainState, activity, error, notices, widgets, statusMarks, refreshSubagentMessages,
+  };
 }
 export type InspectorData = ReturnType<typeof useInspectorData>;
 export function describeRun(run: ToolRun) {

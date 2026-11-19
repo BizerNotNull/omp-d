@@ -22,6 +22,7 @@ export function InspectorDetail({ selection, data, onSelect, onClose }: { select
   }, [agentId, agentStatus, refreshAgent]);
   const title = selection.kind === "tasks" ? "Task progress" : selection.kind === "diff" ? selection.path : selection.kind === "changes" ? "Changes" : agent?.name ?? (selection.kind === "agent" && selection.id === "main" ? "Main agent" : "Agents");
   const files = scope === "session" ? data.sessionFiles : data.files;
+  const changesLoading = data.gitLoading || (scope === "session" && data.transcriptLoading);
   const mainOutput = data.runs.length === 0 ? data.activity : undefined;
   return <section aria-label={title} className="flex min-h-0 flex-1 flex-col overflow-hidden">
     <header className="flex min-h-11 shrink-0 items-center gap-3 border-b px-4"><button type="button" onClick={onClose} className="flex shrink-0 items-center gap-1.5 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"><ArrowLeft className="size-3.5" />Back to conversation</button><h2 className="truncate text-xs font-medium" title={title}>{title}</h2></header>
@@ -33,7 +34,7 @@ export function InspectorDetail({ selection, data, onSelect, onClose }: { select
       {selection.kind === "changes" && <div className="mx-auto max-w-3xl">
         <div role="group" aria-label="Change scope" className="mb-3 flex gap-1 border-b pb-3">{(["session", "worktree"] as const).map((value) => <button key={value} type="button" aria-pressed={scope === value} onClick={() => setScope(value)} className={cn("rounded px-3 py-1.5 text-xs", scope === value ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted")}>{value === "session" ? "Current session" : "Working tree"}</button>)}</div>
         {scope === "session" && <p className="mb-3 text-xs text-muted-foreground">Files edited by this session's tools. Diffs include all current working-tree edits to those files.</p>}
-        {data.gitLoading ? <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground"><LoaderCircle aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />Loading Git changes…</p> :
+        {changesLoading ? <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground"><LoaderCircle aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />{data.gitLoading ? "Loading Git changes…" : "Loading session edits…"}</p> :
           data.gitError ? <p role="alert" className="text-sm text-destructive">{data.gitError}</p> : files ? files.length ? files.map((file) => <FileChangeRow key={file.path} file={file} onClick={() => onSelect({ kind: "diff", path: file.path })} />) : <p className="text-sm text-muted-foreground">{scope === "session" ? "No modified files from recorded session edits." : "Working tree is clean."}</p> : <p className="text-sm text-muted-foreground">Git changes are unavailable for this workspace.</p>}
       </div>}
       {selection.kind === "diff" && data.cwd && <FileDiff key={`${data.cwd}:${selection.path}`} cwd={data.cwd} path={selection.path} />}

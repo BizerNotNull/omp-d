@@ -9,6 +9,7 @@ import { configureSessionNavigation, rememberActiveSession, sessionPathKey, useS
 import type {
   AgentMessage,
   AvailableCommand,
+  BtwRecord,
   ExtensionUIRequest,
   ExtensionUIResponse,
   GoalModeState,
@@ -29,6 +30,7 @@ import type {
   SubagentProgress,
   SubagentMessagesResult,
   TodoPhase,
+  UserMessage,
 } from "./types";
 import { firstLine, imageBlocks, modelLabel, stripPrivateUse } from "./format";
 
@@ -126,6 +128,7 @@ interface AppState {
   selectRuntime: (id: number) => void;
   draftText: string;
   draftImages: ImageContent[];
+  submitting: boolean;
   setDraftText: (text: string) => void;
   setDraftImages: (images: ImageContent[] | ((current: ImageContent[]) => ImageContent[])) => void;
   status: ConnectionStatus;
@@ -142,6 +145,7 @@ interface AppState {
   messages: AgentMessage[];
   messageKeys: Set<string>;
   pending: PendingMessage[];
+  promptEcho?: { id: string; message: UserMessage };
   toolRuns: Record<string, ToolRun>;
   subagents: Record<string, SubagentSnapshot>;
   subagentsAvailable?: boolean;
@@ -191,10 +195,20 @@ interface AppState {
   switchBranch: (entryId: string) => Promise<boolean>;
   loadSessions: () => Promise<void>;
 
-  prompt: (text: string, images?: ImageContent[], behavior?: "steer" | "followUp") => Promise<boolean>;
+  prompt: (behavior?: "followUp") => Promise<void>;
   abort: () => Promise<void>;
   compact: () => Promise<void>;
   removeQueued: (message: string, queue: "steering" | "followUp") => Promise<void>;
+
+  btwView?: "topic" | "history";
+  btwRecords: BtwRecord[];
+  btwRunningId?: string;
+  btwStarting: boolean;
+  btwLoading: boolean;
+  btwHistoryError?: string;
+  closeBtw: () => void;
+  askBtw: (question: string, recordId?: string) => Promise<boolean>;
+  cancelBtw: () => Promise<void>;
 
   newSession: (targetCwd?: string) => Promise<void>;
   switchSession: (path: string, cwd?: string) => Promise<void>;
@@ -235,8 +249,10 @@ function bindCatalog(key: string) {
 runtimeModifiedTimes.set(id, initialSessionPath ? 0 : Date.now());
 let refreshing: Promise<void> | undefined;
 let refreshAgain = false;
+let refreshRequest = 0;
 let gitRefreshKey: string | undefined;
 let conversationRevision = 0;
+let promptSequence = 0;
 let treeRequest = 0;
 let treeWarningGeneration: number | undefined;
 let workspaceQuerySeq = 0;
@@ -244,6 +260,15 @@ let subagentSubscriptionGeneration: number | undefined;
 let subagentRefresh: Promise<void> | undefined;
 let subagentEventRevision = 0;
 const subagentMessageRequests = new Map<string, number>();
+let btwRevision = 0;
+
+function resetBtw() {
+  ++btwRevision;
+  return {
+    btwView: undefined, btwRecords: [], btwRunningId: undefined,
+    btwStarting: false, btwLoading: false, btwHistoryError: undefined,
+  };
+}
 
 function messageKey(message: AgentMessage): string {
   const timestamp = typeof message.timestamp === "number" ? message.timestamp : 0;
@@ -256,6 +281,11 @@ function messageKey(message: AgentMessage): string {
     return `assistant:${timestamp}:${callId}`;
   }
   return `${message.role}:${timestamp}`;
+}
+
+function isDirectUserMessage(message: AgentMessage): boolean {
+  return message.role === "user" && !message.synthetic && message.attribution !== "agent"
+    && !message.steering && !message.liveSteered;
 }
 
 function withMessageKeys(messages: AgentMessage[]): { messages: AgentMessage[]; messageKeys: Set<string> } {
@@ -280,6 +310,7 @@ const runtime = create<AppState>()((set, get) => ({
   selectRuntime,
   draftText: "",
   draftImages: [],
+  submitting: false,
   setDraftText: (draftText) => set({ draftText }),
   setDraftImages: (images) => set((state) => ({ draftImages: typeof images === "function" ? images(state.draftImages) : images })),
   status: "idle",
@@ -297,6 +328,7 @@ const runtime = create<AppState>()((set, get) => ({
   messageBranches: [],
   treeLoading: false,
   branching: false,
+  ...resetBtw(),
 
   commands: [],
   thinkingLevels: [],
@@ -373,6 +405,8 @@ const runtime = create<AppState>()((set, get) => ({
       messages: withMessageKeys([]).messages,
       messageKeys: new Set<string>(),
       pending: [],
+      promptEcho: undefined,
+      ...resetBtw(),
       toolRuns: {},
       subagents: {},
       subagentMessages: {},
@@ -426,10 +460,10 @@ const runtime = create<AppState>()((set, get) => ({
       await get().refreshAll();
       if (ticket !== connectTicket) return;
       set({ hydrating: false });
-      await get().loadSessions();
-      if (ticket !== connectTicket) return;
       recordPhase("hydrate", hydrateStarted);
       recordPhase("total", started);
+      const navigation = useSessionNavigation.getState();
+      if (!navigation.switchingProject && !navigation.switchingWorktree && !navigation.sessionsLoading) void get().loadSessions();
     } catch (error) {
       if (ticket !== connectTicket) return;
       set({ status: "error", hydrating: false, error: describeError(error), sessionsLoading: false });
@@ -446,7 +480,7 @@ const runtime = create<AppState>()((set, get) => ({
 
   disconnect: async () => {
     ++connectTicket;
-    set({ status: "stopped", hydrating: false });
+    set({ ...resetBtw(), status: "stopped", hydrating: false, promptEcho: undefined });
     if (activeRuntime === runtime) discardSpare();
     catalogSubscription?.();
     subscribedCatalogKey = undefined;
@@ -546,46 +580,57 @@ const runtime = create<AppState>()((set, get) => ({
     refreshing = promise;
     const generation = omp.generation;
     const revision = conversationRevision;
+    const request = ++refreshRequest;
+    const current = () => omp.generation === generation && revision === conversationRevision
+      && request === refreshRequest && get().status === "ready";
     void get().refreshTree();
     void get().refreshSubagents();
     try {
-      const [state, messages, stats, levels, commands] = await Promise.all([
-        omp.send<RpcSessionState>({ type: "get_state" }).catch(() => undefined),
-        omp.send<{ messages: AgentMessage[] }>({ type: "get_messages" }).catch(() => undefined),
-        omp.send<SessionStats>({ type: "get_session_stats" }).catch(() => undefined),
-        omp.send<{ levels: string[] }>({ type: "get_available_thinking_levels" }).catch(() => undefined),
-        omp.send<{ commands: AvailableCommand[] }>({ type: "get_available_commands" }).catch(() => undefined),
-      ]);
-      if (omp.generation !== generation || revision !== conversationRevision) return;
-      const session = state?.data;
-      const transcript = messages?.data?.messages;
-      if (transcript) runtimeModifiedTimes.set(id, transcript.reduce((modified, message) =>
-        Math.max(modified, typeof message.timestamp === "number" ? message.timestamp : 0), runtimeModifiedTimes.get(id) ?? 0));
-      if (session) {
-        await syncSessionWorkspace(set, () => omp.generation === generation && revision === conversationRevision);
-        if (omp.generation !== generation || revision !== conversationRevision) return;
+      const state = omp.send<RpcSessionState>({ type: "get_state" }).catch(() => undefined);
+      const messages = omp.send<{ messages: AgentMessage[] }>({ type: "get_messages" }).catch(() => undefined);
+      // These results have their own consumers and don't gate transcript restoration.
+      void omp.send<SessionStats>({ type: "get_session_stats" }).then((response) => {
+        if (current() && response.data) set({ stats: response.data });
+      }, () => {});
+      void omp.send<{ levels: string[] }>({ type: "get_available_thinking_levels" }).then((response) => {
+        if (current() && response.data) set({ thinkingLevels: response.data.levels });
+      }, () => {});
+      void omp.send<{ commands: AvailableCommand[] }>({ type: "get_available_commands" }).then((response) => {
+        if (current() && response.data) set({ commands: response.data.commands });
+      }, () => {});
+      const workspace = state.then(async (response) => {
+        const session = response?.data;
+        if (!current() || !session) return;
+        set((previous) => ({
+          session,
+          queue: session.queuedMessages
+            ? {
+                steering: session.queuedMessages.steering ?? [],
+                followUp: session.queuedMessages.followUp ?? [],
+                liveSteered: session.queuedMessages.liveSteered,
+              }
+            : previous.queue,
+          busy: Boolean(session.isStreaming ?? previous.busy),
+        }));
+        await syncSessionWorkspace(set, current);
+      });
+      const [response] = await Promise.all([messages, workspace]);
+      if (!current()) return;
+      const transcript = response?.data?.messages;
+      if (transcript) {
+        runtimeModifiedTimes.set(id, transcript.reduce((modified, message) =>
+          Math.max(modified, typeof message.timestamp === "number" ? message.timestamp : 0), runtimeModifiedTimes.get(id) ?? 0));
+        set((previous) => ({
+          ...withMessageKeys(transcript),
+          messageBranches: previous.sessionTree ? projectMessageBranches(previous.sessionTree, transcript) : [],
+          pending: [],
+          toolRuns: {},
+        }));
       }
-      set((current) => ({
-        session: session ?? current.session,
-        stats: stats?.data ?? current.stats,
-        ...(transcript ? withMessageKeys(transcript) : { messages: current.messages, messageKeys: current.messageKeys }),
-        messageBranches: current.sessionTree ? projectMessageBranches(current.sessionTree, transcript ?? current.messages) : [],
-        pending: transcript ? [] : current.pending,
-        thinkingLevels: levels?.data?.levels ?? current.thinkingLevels,
-        commands: commands?.data?.commands ?? current.commands,
-        queue: session?.queuedMessages
-          ? {
-              steering: session.queuedMessages.steering ?? [],
-              followUp: session.queuedMessages.followUp ?? [],
-              liveSteered: session.queuedMessages.liveSteered,
-            }
-          : current.queue,
-        busy: Boolean(session?.isStreaming ?? current.busy),
-        toolRuns: transcript ? {} : current.toolRuns,
-      }));
-      if (session?.sessionName) setTitle(`${session.sessionName} — omp-d`);
+      const sessionName = get().session?.sessionName;
+      if (sessionName) setTitle(`${sessionName} — omp-d`);
     } catch (error) {
-      if (omp.generation === generation && get().status === "ready") {
+      if (current()) {
         pushToast(set, "warning", describeError(error));
       }
     } finally {
@@ -660,7 +705,11 @@ const runtime = create<AppState>()((set, get) => ({
       await syncSessionWorkspace(set, current);
       if (!current()) return;
       setTitle(session.sessionName ? `${stripPrivateUse(session.sessionName)} — omp-d` : "omp-d — Oh My Pi");
+      const previousSessionId = get().session?.sessionId;
+      const changedSession = previousSessionId !== undefined && previousSessionId !== session.sessionId;
+      const btwReset = changedSession ? resetBtw() : undefined;
       set((state) => ({
+        ...btwReset,
         session,
         busy: Boolean(session.isStreaming),
         queue: {
@@ -710,15 +759,81 @@ const runtime = create<AppState>()((set, get) => ({
     await useSessionNavigation.getState().refresh();
   },
 
-  prompt: async (text, images, behavior) => {
-    const trimmed = text.trim();
-    if (get().status !== "ready" || get().hydrating || get().branching) return false;
-    if (!trimmed) return false;
-    const shouldTitle = !get().session?.sessionName && (get().session?.messageCount ?? 0) === 0 && !trimmed.startsWith("/");
-    // Goal lifecycle commands must not mark an idle session as streaming.
-    if (/^\/(?:goal|guided-goal)(?:\s|$)/.test(trimmed)) {
-      try {
-        if (images?.length) throw new Error("Goal commands do not accept image attachments.");
+  closeBtw: () => set({ btwView: undefined }),
+
+  askBtw: async (question, recordId) => {
+    const state = get();
+    question = question.trim();
+    if (!question || state.status !== "ready" || state.hydrating || state.branching) return false;
+    if (state.btwStarting || state.btwRunningId) {
+      pushToast(set, "warning", "A side question is already running. Cancel it before asking another.");
+      return false;
+    }
+    const revision = btwRevision;
+    set({ btwStarting: true, ...(recordId === undefined && { btwView: "topic" }) });
+    try {
+      await omp.send({ type: "btw", question, ...(recordId !== undefined && { recordId }) });
+      return revision === btwRevision;
+    } catch (error) {
+      if (revision === btwRevision) pushToast(set, "error", describeError(error));
+      return false;
+    } finally {
+      if (revision === btwRevision) set({ btwStarting: false });
+    }
+  },
+
+  cancelBtw: async () => {
+    const recordId = get().btwRunningId;
+    if (!recordId || get().status !== "ready") return;
+    const revision = btwRevision;
+    try {
+      await omp.send({ type: "btw_cancel", recordId });
+    } catch (error) {
+      if (revision === btwRevision) pushToast(set, "error", describeError(error));
+    }
+  },
+
+  prompt: async (behavior) => {
+    const { status, hydrating, branching, submitting, draftText, draftImages, busy, session } = get();
+    if (status !== "ready" || hydrating || branching || submitting) return;
+    const trimmed = draftText.trim();
+    if (!trimmed) return;
+    if (/^\/btw(?:\s|$)/.test(trimmed)) {
+      const question = trimmed.slice(4).trim();
+      if (!question) {
+        set({ draftText: "" });
+        await openBtwHistory(set, get);
+        return;
+      }
+      if (draftImages.length) {
+        pushToast(set, "warning", "/btw questions do not accept image attachments in omp RPC.");
+        return;
+      }
+      const revision = btwRevision;
+      set({ draftText: "" });
+      if (!await get().askBtw(question) && revision === btwRevision) {
+        set((state) => !state.draftText ? { draftText } : state);
+      }
+      return;
+    }
+    const shouldTitle = !session?.sessionName && (session?.messageCount ?? 0) === 0 && !trimmed.startsWith("/");
+    const goalCommand = /^\/(?:goal|guided-goal)(?:\s|$)/.test(trimmed);
+    const clearedImages: ImageContent[] = [];
+    const promptEcho = !busy && !trimmed.startsWith("/") ? {
+      id: `ui-prompt-${++promptSequence}`,
+      message: {
+        role: "user" as const,
+        content: draftImages.length ? [{ type: "text" as const, text: trimmed }, ...draftImages] : trimmed,
+        timestamp: Date.now(),
+      },
+    } : undefined;
+    set({ submitting: true, draftText: "", draftImages: clearedImages, busy: busy || !goalCommand,
+      ...(promptEcho && { promptEcho }) });
+    let accepted = false;
+    try {
+      // Goal lifecycle commands must not mark an idle session as streaming.
+      if (goalCommand) {
+        if (draftImages.length) throw new Error("Goal commands do not accept image attachments.");
         if (trimmed.startsWith("/guided-goal")) {
           throw new Error("Guided goals are not supported by the installed omp RPC API.");
         }
@@ -751,6 +866,7 @@ const runtime = create<AppState>()((set, get) => ({
         }
         if (op === "get" && rest) throw new Error("Usage: /goal show");
         const response = await omp.send<{ state: GoalModeState | null }>({ type: "goal", op, ...(objective ? { objective } : {}) });
+        accepted = true;
         if (response.data) {
           const goalState = response.data.state;
           set((state) => state.session ? { session: { ...state.session, goal: goalState } } : {});
@@ -760,23 +876,20 @@ const runtime = create<AppState>()((set, get) => ({
             : "No current goal. Use /goal set <objective> to start one.");
         }
         await get().refreshState();
-        return true;
-      } catch (error) {
-        pushToast(set, "error", describeError(error));
-        return false;
+        return;
       }
-    }
-    try {
-      set({ busy: true });
+
       const command: RpcCommand = { type: "prompt", message: trimmed };
-      if (images?.length) command.images = images;
-      if (behavior) command.streamingBehavior = behavior;
+      if (promptEcho) command.id = promptEcho.id;
+      if (draftImages.length) command.images = draftImages;
+      if (busy) command.streamingBehavior = behavior ?? "steer";
       const response = await omp.send<{ agentInvoked?: boolean }>(command).catch((error) => {
-        set({ busy: false });
+        set((state) => ({ busy: false, promptEcho: state.promptEcho === promptEcho ? undefined : state.promptEcho }));
         throw error;
       });
+      accepted = true;
       if (response.data?.agentInvoked === false) {
-        set({ busy: false });
+        set((state) => ({ busy: false, promptEcho: state.promptEcho === promptEcho ? undefined : state.promptEcho }));
         await get().refreshAll();
       }
       if (shouldTitle) {
@@ -785,10 +898,13 @@ const runtime = create<AppState>()((set, get) => ({
         await get().refreshState();
         await get().loadSessions();
       }
-      return true;
     } catch (error) {
       pushToast(set, "error", describeError(error));
-      return false;
+    } finally {
+      // An acknowledgement belongs to this runtime and must leave any new draft intact.
+      set((state) => !accepted && !state.draftText && state.draftImages === clearedImages
+        ? { submitting: false, draftText, draftImages }
+        : { submitting: false });
     }
   },
 
@@ -910,6 +1026,41 @@ const runtime = create<AppState>()((set, get) => ({
       runtimeModifiedTimes.set(id, Date.now());
     }
     switch (frame.type) {
+      case "btw_record": {
+        const record = frame.record as BtwRecord | undefined;
+        if (!record?.id) return;
+        const running = (record.followUps?.at(-1) ?? record).status === "running";
+        const { session, btwRecords } = get();
+        const firstSideQuestion = btwRecords.length === 0;
+        const entry = runtimes.get(id);
+        if (entry && firstSideQuestion && session?.sessionFile) entry.path = session.sessionFile;
+        set((state) => {
+          const records = state.btwRecords;
+          return {
+            btwRecords: records.some((entry) => entry.id === record.id)
+              ? records.map((entry) => entry.id === record.id ? record : entry)
+              : [record, ...records],
+            ...(running ? { btwRunningId: record.id }
+              : state.btwRunningId === record.id ? { btwRunningId: undefined } : {}),
+          };
+        });
+        return;
+      }
+      case "btw_delta": {
+        const { recordId, delta } = frame;
+        if (typeof recordId !== "string" || recordId !== get().btwRunningId || typeof delta !== "string") return;
+        set((state) => ({
+          btwRecords: state.btwRecords.map((record) => {
+            if (record.id !== recordId) return record;
+            if (!record.followUps?.length) return { ...record, answer: record.answer + delta };
+            const followUps = record.followUps.slice();
+            const latest = followUps.at(-1)!;
+            followUps[followUps.length - 1] = { ...latest, answer: latest.answer + delta };
+            return { ...record, followUps };
+          }),
+        }));
+        return;
+      }
       case "subagent_lifecycle": {
         const payload = frame.payload;
         if (!isRecord(payload) || typeof payload.id !== "string" || typeof payload.agent !== "string"
@@ -959,24 +1110,20 @@ const runtime = create<AppState>()((set, get) => ({
         }));
         return;
       }
-      case "message_start": {
-        const messageId = String(frame.messageId ?? "");
-        const message = frame.message as AgentMessage | undefined;
-        if (!messageId || !message) return;
-        set((state) => ({
-          pending: [...state.pending.filter((entry) => entry.messageId !== messageId), { messageId, message }],
-        }));
-        return;
-      }
+      case "message_start":
       case "message_update": {
         const messageId = String(frame.messageId ?? "");
         const message = frame.message as AgentMessage | undefined;
         if (!messageId || !message) return;
         set((state) => {
           const exists = state.pending.some((entry) => entry.messageId === messageId);
-          return exists
-            ? { pending: state.pending.map((entry) => (entry.messageId === messageId ? { messageId, message } : entry)) }
-            : { pending: [...state.pending, { messageId, message }] };
+          return {
+            pending: exists
+              ? state.pending.map((entry) => (entry.messageId === messageId ? { messageId, message } : entry))
+              : [...state.pending, { messageId, message }],
+            // An idle submission owns the next non-queued, visible user message.
+            promptEcho: state.promptEcho && isDirectUserMessage(message) ? undefined : state.promptEcho,
+          };
         });
         return;
       }
@@ -990,7 +1137,8 @@ const runtime = create<AppState>()((set, get) => ({
           if (state.messageKeys.has(key)) return { pending };
           const messageKeys = new Set(state.messageKeys);
           messageKeys.add(key);
-          return { pending, messages: [...state.messages, message], messageKeys };
+          return { pending, messages: [...state.messages, message], messageKeys,
+            promptEcho: state.promptEcho && isDirectUserMessage(message) ? undefined : state.promptEcho };
         });
         return;
       }
@@ -1056,7 +1204,11 @@ const runtime = create<AppState>()((set, get) => ({
           pushNotice(set, "info", "Run aborted.");
         }
         if (result.error?.message) pushNotice(set, "error", result.error.message);
-        if (result.sessionSettled) set({ busy: false });
+        const echo = get().promptEcho;
+        if (result.sessionSettled || (echo && echo.id === result.id)) {
+          set({ ...(result.sessionSettled && { busy: false }),
+            ...(echo && echo.id === result.id && { promptEcho: undefined }) });
+        }
         if (!result.agentInvoked) {
           void get().refreshAll();
           void get().loadSessions();
@@ -1137,7 +1289,7 @@ const runtime = create<AppState>()((set, get) => ({
       case "disconnected":
         catalogSubscription?.();
         subscribedCatalogKey = undefined;
-        set({ status: "stopped", hydrating: false, subagents: {}, subagentMessages: {}, subagentsAvailable: undefined, busy: false, branching: false, treeLoading: false, error: event.reason, modelsLoading: false, rolesLoading: false });
+        set({ ...resetBtw(), status: "stopped", hydrating: false, promptEcho: undefined, subagents: {}, subagentMessages: {}, subagentsAvailable: undefined, busy: false, branching: false, treeLoading: false, error: event.reason, modelsLoading: false, rolesLoading: false });
         return;
       case "protocol":
         appendDiagnostic(set, `${event.event.kind}: ${event.event.message}`);
@@ -1150,7 +1302,7 @@ const runtime = create<AppState>()((set, get) => ({
         if (event.event.kind === "error") {
           catalogSubscription?.();
           subscribedCatalogKey = undefined;
-          set({ status: "error", hydrating: false, subagents: {}, subagentMessages: {}, subagentsAvailable: undefined, error: event.event.message, busy: false, branching: false, treeLoading: false, modelsLoading: false, rolesLoading: false });
+          set({ status: "error", hydrating: false, promptEcho: undefined, subagents: {}, subagentMessages: {}, subagentsAvailable: undefined, error: event.event.message, busy: false, branching: false, treeLoading: false, modelsLoading: false, rolesLoading: false });
         }
         return;
     }
@@ -1160,6 +1312,35 @@ const runtime = create<AppState>()((set, get) => ({
 /* ---------------------------------------------------------------- helpers */
 
 type SetState = (partial: Partial<AppState> | ((state: AppState) => Partial<AppState>)) => void;
+
+async function openBtwHistory(set: SetState, get: () => AppState) {
+  const { btwLoading, btwRecords } = get();
+  if (btwLoading) {
+    set({ btwView: "history" });
+    return;
+  }
+  const revision = btwRevision;
+  set({ btwView: "history", btwLoading: true, btwHistoryError: undefined });
+  try {
+    const { data } = await omp.send<{ records: BtwRecord[] }>({ type: "get_btw_history" });
+    if (revision !== btwRevision) return;
+    if (!data) throw new Error("omp did not return /btw history.");
+    set((state) => {
+      const records = new Map(data.records.map((record) => [record.id, record]));
+      const before = new Map(btwRecords.map((record) => [record.id, record]));
+      // A live record or delta received during the request supersedes the snapshot.
+      for (const record of state.btwRecords) {
+        if (before.get(record.id) !== record) records.set(record.id, record);
+      }
+      const merged = [...records.values()].sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
+      return { btwRecords: merged };
+    });
+  } catch (error) {
+    if (revision === btwRevision) set({ btwHistoryError: describeError(error) });
+  } finally {
+    if (revision === btwRevision) set({ btwLoading: false });
+  }
+}
 
 async function syncSessionWorkspace(
   set: SetState,
@@ -1198,7 +1379,7 @@ async function navigateConversation(
       return false;
     }
     moved = true;
-    set({ pending: [], toolRuns: {}, subagents: {}, subagentMessages: {}, notices: [], dialogs: [], statusMarks: {}, widgets: {}, messageBranches: [] });
+    set({ stats: undefined, pending: [], toolRuns: {}, subagents: {}, subagentMessages: {}, notices: [], dialogs: [], statusMarks: {}, widgets: {}, messageBranches: [] });
     if (draft) {
       // Submit only after the runtime has moved to the edited message's parent.
       // Do not use prompt(): ordinary submissions stay locked during this transition.
@@ -1464,7 +1645,7 @@ useSessionNavigation.subscribe(({ repositoryCwd, sessionListing, sessionsLoading
 /** A runtime exists as soon as omp starts; conversation is what makes it a session. */
 function hasSessionActivity(state: AppState): boolean {
   return Boolean(state.messages.length || state.pending.length || state.busy
-    || state.session?.messageCount || state.session?.hasPendingAsyncWork
+    || state.btwRecords.length || state.session?.messageCount || state.session?.hasPendingAsyncWork
     || state.session?.queuedMessageCount || state.session?.sessionName
     || state.session?.sessionTitle || state.session?.goal);
 }
@@ -1518,7 +1699,8 @@ function selectRuntime(id: number) {
   const state = activeRuntime.getState();
   document.title = `${sessionTitle(state.session)} — omp-d`;
   if (state.cwd) localStorage.setItem(LAST_CWD_KEY, state.cwd);
-  void state.loadSessions();
+  const navigation = useSessionNavigation.getState();
+  if (state.status === "ready" && !navigation.switchingProject && !navigation.switchingWorktree && !navigation.sessionsLoading) void state.loadSessions();
 }
 
 async function openRuntime(cwd: string, path?: string, draft?: Pick<AppState, "draftText" | "draftImages">) {
@@ -1527,7 +1709,7 @@ async function openRuntime(cwd: string, path?: string, draft?: Pick<AppState, "d
     const empty = [...runtimes.values()].find((entry) => !entry.path
       && ["starting", "ready"].includes(entry.store.getState().status)
       && sessionPathKey(entry.store.getState().cwd) === sessionPathKey(cwd)
-      && !hasSessionActivity(entry.store.getState()));
+      && !entry.store.getState().btwStarting && !hasSessionActivity(entry.store.getState()));
     if (empty) {
       if (draft) empty.store.setState(draft);
       selectRuntime(empty.store.getState().activeRuntimeId);

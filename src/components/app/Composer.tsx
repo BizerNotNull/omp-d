@@ -7,6 +7,7 @@ import { useAppStore } from "@/lib/omp/store";
 import type { AvailableCommand, ImageContent } from "@/lib/omp/types";
 import { ComposerStatus } from "./ComposerStatus";
 import { AgentRequestCard } from "./AgentRequestCard";
+import { BtwPanel } from "./BtwPanel";
 
 function readImage(file: File): Promise<ImageContent | undefined> {
   return new Promise((resolve) => {
@@ -31,12 +32,11 @@ export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, active }: 
   const setDraft = useAppStore((state) => state.setDraftText);
   const images = useAppStore((state) => state.draftImages);
   const setImages = useAppStore((state) => state.setDraftImages);
-  const [submitting, setSubmitting] = useState(false);
+  const submitting = useAppStore((state) => state.submitting);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const suggestionsRef = useRef<HTMLDivElement | null>(null);
   const lastEditorToken = useRef(0);
-  const sendingRef = useRef(false);
 
   const busy = useAppStore((state) => state.busy);
   const branching = useAppStore((state) => state.branching);
@@ -76,6 +76,7 @@ export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, active }: 
       { name: "models", description: "Browse providers, roles, and models", source: "builtin" },
       { name: "settings", description: "Configure Oh My Pi and desktop preferences", source: "builtin" },
       { name: "usage", description: "Show provider plan usage", source: "builtin" },
+      { name: "btw", description: "Ask a side question or open side question history", input: { hint: "[question]" }, source: "builtin" },
       { name: "goal", description: "Show the current goal or set an objective", source: "builtin" },
       ...[
         ["set", "Start a goal: /goal set <objective>"],
@@ -84,7 +85,7 @@ export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, active }: 
         ["resume", "Resume a paused goal"],
         ["drop", "Drop the current goal"],
       ].map(([name, description]) => ({ name: `goal ${name}`, description, source: "builtin" })),
-      ...commands.filter((command) => !["model", "models", "settings", "usage", "goal", "guided-goal"].includes(command.name)),
+      ...commands.filter((command) => !["model", "models", "settings", "usage", "btw", "goal", "guided-goal"].includes(command.name)),
     ];
     return available.filter(
       (command) => command.name.toLowerCase().startsWith(query) && (query.includes(" ") || !command.name.includes(" ")),
@@ -98,9 +99,10 @@ export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, active }: 
   }, [suggestionIndex, suggestions]);
 
   const disabled = status !== "ready" || submitting || branching;
+  const btwCommand = /^\/btw(?:\s|$)/.test(draft.trimStart());
 
-  async function submit(behavior?: "steer" | "followUp") {
-    if (disabled || sendingRef.current) return;
+  function submit(behavior?: "followUp") {
+    if (disabled) return;
     const text = draft.trim();
     if (!text) return;
     if (text === "/model" || text === "/models") {
@@ -118,19 +120,8 @@ export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, active }: 
       onOpenUsage();
       return;
     }
-    sendingRef.current = true;
-    setSubmitting(true);
-    try {
-      const sent = await prompt(draft, images.length ? images : undefined, busy ? behavior ?? "steer" : undefined);
-      if (sent) {
-        setDraft("");
-        setImages([]);
-      }
-    } finally {
-      sendingRef.current = false;
-      setSubmitting(false);
-      textareaRef.current?.focus();
-    }
+    textareaRef.current?.focus({ preventScroll: true });
+    void prompt(behavior);
   }
 
   function chooseCommand(command: AvailableCommand) {
@@ -166,6 +157,11 @@ export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, active }: 
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Enter" && !event.shiftKey && !event.altKey && draft.trim() === "/btw") {
+      event.preventDefault();
+      submit();
+      return;
+    }
     if (branching) return;
     if (suggestions.length > 0) {
       if (event.key === "ArrowDown") {
@@ -197,7 +193,7 @@ export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, active }: 
     }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      void submit(event.altKey ? "followUp" : undefined);
+      submit(event.altKey ? "followUp" : undefined);
     }
   }
 
@@ -272,6 +268,7 @@ export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, active }: 
         )}
 
         <AgentRequestCard />
+        <BtwPanel />
 
         <div className="relative">
           {suggestions.length > 0 && (
@@ -338,11 +335,11 @@ export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, active }: 
                 <Button
                   size="sm"
                   disabled={disabled || (!draft.trim() && images.length === 0)}
-                  onClick={() => void submit(undefined)}
+                  onClick={() => submit()}
                   className="gap-1.5"
                 >
                   {submitting || status === "starting" ? <LoaderCircle className="size-3.5 animate-spin" /> : <ArrowUp className="size-3.5" />}
-                  {busy ? "Steer" : "Send"}
+                  {btwCommand ? draft.trim() === "/btw" ? "History" : "Ask" : busy ? "Steer" : "Send"}
                 </Button>
               </div>
             </div>

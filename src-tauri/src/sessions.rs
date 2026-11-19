@@ -84,9 +84,9 @@ fn cached_summary(file: &SessionFile, query: Option<&str>) -> Option<SessionSumm
             .filter(|entry| entry.stamp == file.stamp && file.stamp.modified.is_some());
         if let Some(entry) = entry {
             entry.accessed = Instant::now();
-            if !entry.visible { return None; }
+            if !entry.visible && (query.is_some() || entry.summary.is_none()) { return None; }
             match query {
-                None => return entry.summary.clone(),
+                None if entry.visible => return entry.summary.clone(),
                 Some(query) if entry.search.as_ref().is_some_and(|(previous, _)| previous == query) => {
                     return if entry.search.as_ref().is_some_and(|(_, matches)| *matches) {
                         entry.summary.clone()
@@ -98,6 +98,12 @@ fn cached_summary(file: &SessionFile, query: Option<&str>) -> Option<SessionSumm
             None
         }
     };
+    // omp writes BTW topics beside the JSONL without modifying its stamp.
+    if let Some(entry) = &previous
+        && !entry.visible
+    {
+        return if has_btw_history(Path::new(&file.path)) { entry.summary.clone() } else { None };
+    }
     let mut cached = previous.unwrap_or_else(|| {
         let summary = read_summary(Path::new(&file.path), Path::new(&file.cwd), file.modified_ms, file.size);
         let visible = summary.as_ref().is_some_and(|summary|
@@ -117,7 +123,9 @@ fn cached_summary(file: &SessionFile, query: Option<&str>) -> Option<SessionSumm
         matches
     });
     cached.accessed = Instant::now();
-    let result = if matches { cached.summary.clone() } else { None };
+    let btw_only = !cached.visible && query.is_none() && cached.summary.is_some()
+        && has_btw_history(Path::new(&file.path));
+    let result = if matches || btw_only { cached.summary.clone() } else { None };
     // Do not publish a snapshot read while a writer was appending or renaming.
     if std::fs::metadata(&file.path).ok().is_some_and(|metadata|
         FileStamp::from_metadata(&metadata) == file.stamp)
@@ -131,6 +139,18 @@ fn cached_summary(file: &SessionFile, query: Option<&str>) -> Option<SessionSumm
         cache.insert(file.path.clone(), cached);
     }
     result
+}
+
+fn has_btw_history(session: &Path) -> bool {
+    let Ok(entries) = session.with_extension("").join("btw-history").read_dir() else {
+        return false;
+    };
+    entries.filter_map(Result::ok).any(|entry| {
+        let name = entry.file_name();
+        let name = name.as_encoded_bytes();
+        name.starts_with(b"entry-") && name.ends_with(b".json")
+            && entry.file_type().is_ok_and(|kind| kind.is_file())
+    })
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -427,6 +447,11 @@ pub async fn list_sessions(
         std::fs::canonicalize(&cwd).map_err(|error| format!("Cannot open {cwd}: {error}"))
     }).await.map_err(|error| format!("Session discovery failed: {error}"))??;
     let (repository, directories) = cached_directories(&resolved).await?;
+    if limit == 0 {
+        return Ok(SessionListing {
+            repository_cwd: normalize_path(&repository), directories, sessions: Vec::new(), next_cursor: None,
+        });
+    }
     tokio::task::spawn_blocking(move || {
         listing_from_directories(repository, directories, &sessions_root(), limit,
             cursor.as_ref(), scope.as_deref(), query.as_deref(), paths.as_deref())
@@ -468,7 +493,6 @@ fn listing_from_directories(
     }
     candidates.sort_by(|(a, _), (b, _)| b.modified_ms.cmp(&a.modified_ms).then_with(|| a.path.cmp(&b.path)));
     candidates.dedup_by(|(a, _), (b, _)| a.path == b.path);
-    let limit = limit.max(1);
     let mut sessions = Vec::new();
     for (file, directory_matches) in candidates {
         if cursor.is_some_and(|cursor| file.modified_ms > cursor.modified_ms
@@ -687,6 +711,25 @@ struct SessionFile {
 }
 
 fn read_bucket(dir: &Path, cwd: &Path, paths: Option<&[String]>) -> Result<Vec<SessionFile>, String> {
+    if let Some(paths) = paths {
+        // A remembered or pinned session has a known filename. Only inspect
+        // files directly inside this workspace's bucket.
+        let mut sessions = Vec::new();
+        for candidate in paths {
+            let Some(name) = Path::new(candidate).file_name() else { continue };
+            let path = dir.join(name);
+            if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl")
+                || !same_path(candidate, &normalize_path(&path))
+            {
+                continue;
+            }
+            let Ok(metadata) = std::fs::symlink_metadata(&path) else { continue };
+            if let Some(file) = session_file(&path, cwd, &metadata) {
+                sessions.push(file);
+            }
+        }
+        return Ok(sessions);
+    }
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -699,26 +742,24 @@ fn read_bucket(dir: &Path, cwd: &Path, paths: Option<&[String]>) -> Result<Vec<S
         if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
             continue;
         }
-        if paths.is_some_and(|paths| !paths.iter().any(|candidate| same_path(candidate, &normalize_path(&path)))) {
-            continue;
-        }
         let Ok(meta) = entry.metadata() else { continue };
-        if !meta.is_file() {
-            continue;
+        if let Some(file) = session_file(&path, cwd, &meta) {
+            sessions.push(file);
         }
-        let modified_ms = meta
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
-        sessions.push(SessionFile {
-            path: normalize_path(&path), cwd: normalize_path(cwd), modified_ms, size: meta.len(),
-            stamp: FileStamp::from_metadata(&meta),
-        });
     }
 
     Ok(sessions)
+}
+
+fn session_file(path: &Path, cwd: &Path, metadata: &std::fs::Metadata) -> Option<SessionFile> {
+    if !metadata.is_file() {
+        return None;
+    }
+    let stamp = FileStamp::from_metadata(metadata);
+    let modified_ms = stamp.modified
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |duration| duration.as_millis() as u64);
+    Some(SessionFile { path: normalize_path(path), cwd: normalize_path(cwd), modified_ms, size: stamp.size, stamp })
 }
 
 fn read_summary(path: &Path, cwd: &Path, modified_ms: u64, size: u64) -> Option<SessionSummary> {
@@ -1016,6 +1057,28 @@ mod tests {
     }
 
     #[test]
+    fn lists_a_btw_only_session_after_its_first_topic_is_saved() {
+        let temp = TempDir::new();
+        let cwd = temp.0.join("project");
+        let root = temp.0.join("sessions");
+        write_session(&root, &cwd, "side", None);
+        let list = || listing_from_directories(cwd.clone(), vec![directory(&cwd, "main")],
+            &root, 10, None, None, None, None).unwrap().sessions;
+        assert!(list().is_empty());
+
+        let history = session_dir_for(&cwd, &root).join("side").join("btw-history");
+        std::fs::create_dir_all(&history).unwrap();
+        std::fs::write(history.join("entry-example.title"), "Side topic").unwrap();
+        assert!(list().is_empty());
+        std::fs::write(history.join("entry-example.json"), r#"{"id":"example","question":"Side topic","answer":"Answer","status":"complete","createdAt":1,"updatedAt":2,"leafId":null}"#).unwrap();
+
+        let sessions = list();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session_id, "side");
+        assert!(sessions[0].preview.is_none());
+    }
+
+    #[test]
     fn flat_pages_cover_all_history_with_exclusive_tied_cursors() {
         let temp = TempDir::new();
         let main = temp.0.join("main");
@@ -1071,11 +1134,17 @@ mod tests {
         assert_eq!(page.sessions.len(), 1);
         assert_eq!(page.sessions[0].session_id, "old");
         assert!(page.next_cursor.is_none());
-        let pinned = vec![normalize_path(&old)];
+        let pinned = vec![
+            normalize_path(&old),
+            normalize_path(&session_dir_for(&main, &root).join("deleted.jsonl")),
+        ];
         let page = listing_from_directories(main.clone(), directories.clone(), &root, 1,
             None, None, None, Some(&pinned)).unwrap();
         assert_eq!(page.sessions[0].session_id, "old");
         assert!(page.next_cursor.is_none());
+        let page = listing_from_directories(main.clone(), directories.clone(), &root, 1,
+            None, Some(&normalize_path(&linked)), None, Some(&pinned)).unwrap();
+        assert!(page.sessions.is_empty());
         for query in ["topic/needle", "linked-name"] {
             let page = listing_from_directories(main.clone(), directories.clone(), &root, 1,
                 None, None, Some(query), None).unwrap();

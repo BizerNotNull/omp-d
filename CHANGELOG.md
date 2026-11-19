@@ -10,6 +10,8 @@
 - Session and workspace switches, model catalog refreshes, plan usage, and native settings reloads show a spinner instead of previous data while loading. Session pagination keeps already-loaded rows visible
 - Reopening a saved session through another Windows path spelling reuses its existing process and sidebar row
 - Reloading the desktop renderer now stops its previous agent processes before restoring the saved session, so leftover write locks no longer cause duplicate sessions
+- Switching projects opens a new conversation in the selected folder. Previous sessions remain available in the sidebar.
+
 ## 0.1.0 — 2026-11-06
 
 Initial desktop client for Oh My Pi.

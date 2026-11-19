@@ -26,7 +26,6 @@ interface NavigationPreferences {
   pinnedWorktrees: string[];
   recentWorktrees: string[];
   recentProjects: string[];
-  lastWorktreeByProject: Record<string, string>;
   lastSessionByWorktree: Record<string, string>;
   scrollPositionByScope: Record<string, number>;
 }
@@ -54,7 +53,7 @@ export interface SessionNavigationState extends NavigationPreferences {
 const STORAGE_KEY = "ompd:sessionNavigation";
 const defaults: NavigationPreferences = {
   view: "recent", worktreeScope: "all", query: "", pinnedSessions: [], pinnedWorktrees: [],
-  recentWorktrees: [], recentProjects: [], lastWorktreeByProject: {}, lastSessionByWorktree: {}, scrollPositionByScope: {},
+  recentWorktrees: [], recentProjects: [], lastSessionByWorktree: {}, scrollPositionByScope: {},
 };
 function preferences(): NavigationPreferences {
   try {
@@ -71,7 +70,6 @@ function preferences(): NavigationPreferences {
       pinnedSessions: strings(saved.pinnedSessions), pinnedWorktrees: strings(saved.pinnedWorktrees),
       recentWorktrees: strings(saved.recentWorktrees),
       recentProjects: strings(saved.recentProjects),
-      lastWorktreeByProject: record<string>(saved.lastWorktreeByProject, "string"),
       lastSessionByWorktree: record<string>(saved.lastSessionByWorktree, "string"),
       scrollPositionByScope: record<number>(saved.scrollPositionByScope, "number"),
     };
@@ -169,11 +167,9 @@ async function fetchPage(more: boolean): Promise<void> {
       const current = useSessionNavigation.getState();
       const root = sessionPathKey(result.repositoryCwd);
       const directories = new Set(result.directories.map((item) => sessionPathKey(item.cwd)));
-      const lastCwd = current.recentWorktrees.find((cwd) => directories.has(sessionPathKey(cwd))) ?? result.repositoryCwd;
       useSessionNavigation.setState({
         repositoryCwd: result.repositoryCwd, sessionListing: listing, sessionsLoading: false, loadingMore: false,
         recentProjects: [result.repositoryCwd, ...current.recentProjects.filter((cwd) => sessionPathKey(cwd) !== root && !directories.has(sessionPathKey(cwd)))].slice(0, 30),
-        lastWorktreeByProject: { ...current.lastWorktreeByProject, [root]: lastCwd },
       });
     }
   } catch (error) {
@@ -201,11 +197,9 @@ export const useSessionNavigation = create<SessionNavigationState>()((set, get) 
       // Resolve before changing context so an unavailable folder leaves the current project usable.
       const listing = await invoke<SessionListing>("list_sessions", { cwd, limit: 1 });
       if (request !== selectionRequest) return;
-      const root = listing.repositoryCwd;
-      const remembered = get().lastWorktreeByProject[sessionPathKey(root)];
-      const target = listing.directories.find((item) => sessionPathKey(item.cwd) === sessionPathKey(remembered))?.cwd ?? cwd;
-      set({ repositoryCwd: root, sessionListing: listing, query: "", view: "recent" });
-      await get().selectWorktree(target);
+      set({ repositoryCwd: listing.repositoryCwd, sessionListing: listing });
+      activateFilters({ worktreeScope: cwd, query: "", view: "recent" });
+      await runtimeActions?.newSession(cwd);
     } catch (error) {
       set({ error: error instanceof Error ? error.message : String(error) });
     } finally {
@@ -213,7 +207,7 @@ export const useSessionNavigation = create<SessionNavigationState>()((set, get) 
     }
   },
   selectWorktree: async (scope) => {
-    if (get().switchingWorktree) return;
+    if (get().switchingProject || get().switchingWorktree) return;
     if (scope !== "all") set({ switchingWorktree: scope });
     get().setWorktreeScope(scope);
     const request = selectionRequest;
@@ -244,8 +238,8 @@ export const useSessionNavigation = create<SessionNavigationState>()((set, get) 
 
 let serializedPreferences = "";
 useSessionNavigation.subscribe((state) => {
-  const { view, worktreeScope, query, pinnedSessions, pinnedWorktrees, recentWorktrees, recentProjects, lastWorktreeByProject, lastSessionByWorktree, scrollPositionByScope } = state;
-  const serialized = JSON.stringify({ view, worktreeScope, query, pinnedSessions, pinnedWorktrees, recentWorktrees, recentProjects, lastWorktreeByProject, lastSessionByWorktree, scrollPositionByScope });
+  const { view, worktreeScope, query, pinnedSessions, pinnedWorktrees, recentWorktrees, recentProjects, lastSessionByWorktree, scrollPositionByScope } = state;
+  const serialized = JSON.stringify({ view, worktreeScope, query, pinnedSessions, pinnedWorktrees, recentWorktrees, recentProjects, lastSessionByWorktree, scrollPositionByScope });
   if (serialized === serializedPreferences) return;
   serializedPreferences = serialized;
   try { localStorage.setItem(STORAGE_KEY, serialized); } catch { /* Navigation remains available when storage is full. */ }
@@ -267,8 +261,7 @@ export function rememberActiveSession(cwd: string, path?: string) {
   const lastSessionByWorktree = path && state.lastSessionByWorktree[key] !== path
     ? { ...state.lastSessionByWorktree, [key]: path } : state.lastSessionByWorktree;
   if (changedProject || recentWorktrees !== state.recentWorktrees || lastSessionByWorktree !== state.lastSessionByWorktree) {
-    const patch = { repositoryCwd, recentWorktrees, lastSessionByWorktree,
-      lastWorktreeByProject: repositoryCwd ? { ...state.lastWorktreeByProject, [sessionPathKey(repositoryCwd)]: cwd } : state.lastWorktreeByProject };
+    const patch = { repositoryCwd, recentWorktrees, lastSessionByWorktree };
     if (changedProject) activateFilters({ ...patch, worktreeScope: "all" });
     else useSessionNavigation.setState(patch);
   }

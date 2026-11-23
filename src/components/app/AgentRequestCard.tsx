@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { useAppStore, type DialogRequest } from "@/lib/omp/store";
+import { HtmlFormDialog } from "./HtmlFormDialog";
 export function AgentRequestCard() {
   const dialogs = useAppStore((state) => state.dialogs);
   const dialog = dialogs[0];
@@ -25,6 +26,10 @@ function RequestBody({ dialog }: { dialog: DialogRequest }) {
 
   if (dialog.method === "ask") {
     return <AskDialog dialog={dialog} onAnswer={answerDialog} onCancel={cancelDialog} />;
+  }
+
+  if (dialog.method === "form") {
+    return <HtmlFormDialog dialog={dialog} onAnswer={answerDialog} onCancel={cancelDialog} />;
   }
 
   const title = dialog.title;

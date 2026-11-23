@@ -72,7 +72,7 @@ export function savePreferences(prefs: Preferences) {
 
 export type DialogRequest = Extract<
   ExtensionUIRequest,
-  { method: "select" | "confirm" | "input" | "editor" | "ask" }
+  { method: "select" | "confirm" | "input" | "editor" | "ask" | "form" }
 >;
 
 export interface Toast {
@@ -1552,6 +1552,7 @@ function handleExtensionRequest(request: ExtensionUIRequest, set: SetState, get:
     case "input":
     case "editor":
     case "ask":
+    case "form":
       set((state) => ({ dialogs: [...state.dialogs, request] }));
       return;
     default:

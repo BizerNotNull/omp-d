@@ -476,6 +476,13 @@ export type ExtensionUIRequest =
       questions: AskQuestion[];
       timeout?: number;
     }
+  | {
+      type: "extension_ui_request";
+      id: string;
+      method: "form";
+      html: string;
+      timeout?: number;
+    }
   | { type: "extension_ui_request"; id: string; method: "cancel"; targetId: string }
   | {
       type: "extension_ui_request";
@@ -514,6 +521,7 @@ export type ExtensionUIResponse =
   | { type: "extension_ui_response"; id: string; value: string }
   | { type: "extension_ui_response"; id: string; confirmed: boolean }
   | { type: "extension_ui_response"; id: string; cancelled: true; timedOut?: boolean }
+  | { type: "extension_ui_response"; id: string; data: Record<string, string | number | string[]> }
   | {
       type: "extension_ui_response";
       id: string;

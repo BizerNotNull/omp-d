@@ -7,6 +7,10 @@
 
 ### Changed
 - Rewrote README with a shorter project description, notes on currently supported slash commands, and the existing limitations
+
+### Fixed
+- Restored ask tool prompts from current omp runtimes by handling HTML form requests, including defaults, validation, typed answers and free-text alternatives. Legacy ask dialogs remain supported.
+
 ## 0.1.0 — 2026-11-06
 
 Initial desktop client for Oh My Pi.

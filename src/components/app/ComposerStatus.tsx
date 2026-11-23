@@ -50,7 +50,6 @@ export function ComposerStatus({ active }: { active: boolean }) {
           <span className="truncate">{session?.goal?.mode === "exiting" ? "exiting" : goal.status}</span>
         </span>
       )}
-      {session?.thinkingLevel && <span title="Thinking level">{session.thinkingLevel}</span>}
       {session?.fastModeEnabled && <span>fast{session.fastModeActive === false ? " (inactive)" : ""}</span>}
       {session?.slowModeEnabled && <span>slow</span>}
       <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-x-2 gap-y-1 sm:ml-auto" title={gitError ?? cwd}>

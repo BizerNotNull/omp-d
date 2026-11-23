@@ -46,6 +46,11 @@ the app updates workspace data in place. Restart the development app after
 source changes. Use `bunx tauri dev` to opt into both watchers, or `bun run dev`
 for frontend-only hot reload.
 
+To enable Rust code navigation in omp, install `rust-analyzer` with
+`rustup component add rust-analyzer`. The project LSP config in
+`.omp/lsp.json` points to `src-tauri/Cargo.toml`. If omp is already running,
+reload its language servers after installing the component.
+
 ## Build
 
 ```bash

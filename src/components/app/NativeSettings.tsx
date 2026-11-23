@@ -4,6 +4,7 @@ import { LoaderCircle, RotateCcw, Save, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAppStore } from "@/lib/omp/store";
 import { invalidateCatalog, splitExtraArgs } from "@/lib/omp/model-catalog";
 import type { StartOptions } from "@/lib/omp/types";
@@ -33,7 +34,8 @@ interface CatalogState {
   feedback: Record<string, RowFeedback>;
 }
 
-const fieldClass = "w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-2 text-xs shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50";
+const booleanChoices = ["true", "false"];
+const textareaClass = "scroll-thin w-full min-w-0 resize-y rounded-md border border-input bg-background px-2.5 py-2 font-mono text-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-50";
 
 export function NativeSettings({ active }: { active: boolean }) {
   const cwd = useAppStore((state) => state.cwd);
@@ -228,7 +230,7 @@ export function NativeSettings({ active }: { active: boolean }) {
         </div>
         {effectiveStale && <p role="status" className="text-xs text-muted-foreground">Effective summaries have not been refreshed since the last write.</p>}
         <p className="text-[10.5px] text-muted-foreground">{shown.length} of {Object.keys(visibleCatalog.entries).length} settings · Reload discards unsaved drafts.</p>
-        <div className="space-y-3">
+        <div className="@container divide-y border-y">
           {shown.length === 0 && <p role="status" className="py-6 text-center text-xs text-muted-foreground">No native settings match this search and category.</p>}
           {shown.map(([key, entry]) => {
             const draft = visibleCatalog.drafts[key];
@@ -238,40 +240,97 @@ export function NativeSettings({ active }: { active: boolean }) {
             const controlId = `${id}-${key}`;
             const descriptionId = `${controlId}-description`;
             const feedbackId = `${controlId}-feedback`;
-            const choiceValues = entry.type === "boolean" ? ["true", "false"] : entry.choices;
+            const choiceValues = entry.type === "boolean" ? booleanChoices : entry.choices;
             const selected = draft.mode === "inherit" ? "inherit" : `value:${draft.text}`;
+            const choiceLabel = draft.mode === "inherit" ? "Inherit" : draft.text || '"" (empty string)';
             const structured = entry.type === "array" || entry.type === "record";
+            const stored = entry.stored !== undefined;
+            const describedBy = `${descriptionId} ${feedbackId}`;
             const effective = effectiveSettingSummary(key, entry);
-            return <article key={key} className="min-w-0 space-y-2 rounded-lg border bg-muted/10 p-3">
-              <div className="flex flex-wrap items-start justify-between gap-1.5">
-                <Label htmlFor={controlId} className="min-w-0 break-all font-mono text-xs">{key}</Label>
-                <span className="text-[10px] text-muted-foreground">{entry.group} · {entry.type}{secret ? " · credential" : ""}{dirty ? " · unsaved" : ""}</span>
-              </div>
-              <p id={descriptionId} className="break-words text-[11px] text-muted-foreground">{entry.description || "Native configuration option."}</p>
-              <div className="min-w-0 rounded-md bg-muted/40 p-2 text-[10.5px]">
-                <div className="text-muted-foreground">Effective now{effectiveStale && !writing ? " (last loaded)" : ""}</div>
-                {effectiveStale && writing ? <p role="status" className="flex items-center gap-2"><LoaderCircle aria-hidden="true" className="size-3 animate-spin motion-reduce:animate-none" />Refreshing effective settings…</p> : <pre className="scroll-thin max-h-24 overflow-auto whitespace-pre-wrap break-all font-mono">{effective}</pre>}
-              </div>
-              <div className="text-[10.5px] text-muted-foreground">Global override: {entry.stored === undefined ? "not set (inherited)" : secret ? "configured (hidden)" : "stored"}. {secret ? "Leave blank to keep it unchanged; enter a replacement to Save." : "Only this global layer is edited below."}</div>
-              {!!choiceValues?.length && !secret ? <select id={controlId} className={fieldClass} disabled={busy} value={selected} aria-describedby={`${descriptionId} ${feedbackId}`} onChange={(event) => updateDraft(key, event.target.value === "inherit" ? { mode: "inherit", text: "" } : { mode: "value", text: event.target.value.slice(6) })}>
-                <option value="inherit">Inherit (no global override)</option>
-                {draft.mode === "value" && !choiceValues.includes(draft.text) && <option value={`value:${draft.text}`}>{draft.text} (stored)</option>}
-                {choiceValues.map((choice) => <option key={choice} value={`value:${choice}`}>{choice}</option>)}
-              </select> : structured && !secret ? <textarea id={controlId} rows={4} className={cn(fieldClass, "scroll-thin resize-y font-mono")} disabled={busy} value={draft.text} placeholder={`Inherited; enter a JSON ${entry.type === "array" ? "array" : "object"} to override`} aria-describedby={`${descriptionId} ${feedbackId}`} spellCheck={false} onChange={(event) => updateDraft(key, { mode: "value", text: event.target.value })} /> : <Input id={controlId} type={secret ? "password" : entry.type === "number" ? "number" : "text"} step={entry.type === "number" ? "any" : undefined} disabled={busy} value={draft.text} placeholder={secret ? (structured ? "Enter replacement JSON (hidden)" : "Enter replacement (hidden)") : draft.mode === "inherit" ? `Inherited: ${effective}` : "Global value"} className="font-mono text-xs" autoComplete="off" spellCheck={false} aria-describedby={`${descriptionId} ${feedbackId}`} onChange={(event) => updateDraft(key, { mode: "value", text: event.target.value })} />}
-              {structured && <p className="text-[10.5px] text-muted-foreground">Enter JSON {entry.type === "array" ? "array, e.g. []" : "object, e.g. {}"}. Native validation also runs when saving.</p>}
-              {entry.type === "string" && !secret && !entry.choices?.length && draft.text === "" && entry.stored === undefined && <Button type="button" variant="ghost" size="sm" disabled={busy || draft.mode === "value"} onClick={() => updateDraft(key, { mode: "value", text: "" })}>Use empty string (not inherited)</Button>}
-              <div className="flex flex-wrap items-center gap-2">
-                <Button type="button" size="sm" variant="outline" disabled={busy || !dirty} aria-label={`Save ${key}`} onClick={() => void writeSetting(key, false)}>
-                  {writing === key ? <LoaderCircle className="mr-1.5 size-3.5 animate-spin" /> : <Save className="mr-1.5 size-3.5" />} Save
-                </Button>
-                <Button type="button" size="sm" variant="ghost" disabled={busy || entry.stored === undefined} title="Remove only the global override; defaults, project settings, or environment will apply" aria-label={`Reset global override for ${key}`} onClick={() => void writeSetting(key, true)}><RotateCcw className="mr-1.5 size-3.5" /> Reset</Button>
-                {dirty && <span className="text-[10.5px] text-muted-foreground">{draft.mode === "inherit" ? "Save removes the global override." : draft.text === "" ? "Save writes an explicit empty string." : "Unsaved global draft"}</span>}
-              </div>
-              <div id={feedbackId} aria-live="polite" className="break-words text-[11px]">
-                {feedback?.error && <p role="alert" className="text-destructive">{feedback.error}</p>}
-                {feedback?.success && <p role="status" className="text-muted-foreground">{feedback.success}</p>}
-              </div>
-            </article>;
+            return (
+              <article key={key} className="grid min-w-0 gap-2 px-1 py-3 @min-[48rem]:grid-cols-2 @min-[48rem]:gap-6">
+                <div className="min-w-0 space-y-1">
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    <Label htmlFor={controlId} className="min-w-0 [overflow-wrap:anywhere] font-mono text-xs">{key}</Label>
+                    <span className="text-[10px] text-muted-foreground">{entry.group} · {entry.type}{secret && " · credential"}</span>
+                  </div>
+                  <p id={descriptionId} className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{entry.description || "Native configuration option."}</p>
+                </div>
+
+                <div className="min-w-0 space-y-1.5">
+                  <div className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-2 text-xs">
+                    <span className="text-muted-foreground">Effective{effectiveStale && !writing ? " (last loaded)" : ""}</span>
+                    {effectiveStale && writing ? (
+                      <p role="status" className="flex items-center gap-1.5">
+                        <LoaderCircle aria-hidden="true" className="size-3 animate-spin motion-reduce:animate-none" /> Refreshing…
+                      </p>
+                    ) : <pre className="scroll-thin max-h-24 overflow-auto font-mono whitespace-pre-wrap [overflow-wrap:anywhere]">{effective}</pre>}
+                  </div>
+
+                  <p className="text-[11px] text-muted-foreground">
+                    Global override: {stored ? secret ? "configured (hidden)" : "stored" : "inherited"}.
+                    {secret && " Enter a replacement to save; leaving it blank keeps the current value."}
+                  </p>
+
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+                    {!!choiceValues?.length && !secret ? (
+                      <Select value={selected} disabled={busy} onValueChange={(value) => {
+                        if (value !== null) updateDraft(key, value === "inherit" ? { mode: "inherit", text: "" } : { mode: "value", text: value.slice(6) });
+                      }}>
+                        <SelectTrigger size="sm" id={controlId} aria-describedby={describedBy}
+                          className="w-40 max-w-full min-w-0 gap-2 bg-background text-xs data-popup-open:bg-muted [&>svg]:size-3.5 [&>svg]:shrink-0">
+                          <SelectValue className="min-w-0"><span className="min-w-0 truncate">{choiceLabel}</span></SelectValue>
+                        </SelectTrigger>
+                        <SelectContent align="start" alignItemWithTrigger={false} className="scroll-thin p-1 motion-reduce:animate-none">
+                          <SelectItem value="inherit" className="min-h-7 px-2 pr-7 text-xs">Inherit</SelectItem>
+                          {draft.mode === "value" && !choiceValues.includes(draft.text) && (
+                            <SelectItem value={selected} className="min-h-7 px-2 pr-7 text-xs">
+                              <span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{choiceLabel} (stored)</span>
+                            </SelectItem>
+                          )}
+                          {choiceValues.map((choice) => (
+                            <SelectItem key={choice} value={`value:${choice}`} className="min-h-7 px-2 pr-7 text-xs">
+                              <span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{choice || '"" (empty string)'}</span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : structured && !secret ? (
+                      <textarea id={controlId} rows={4} className={textareaClass} disabled={busy} value={draft.text}
+                        placeholder={`Enter a JSON ${entry.type === "array" ? "array" : "object"}`} aria-describedby={describedBy} spellCheck={false}
+                        onChange={(event) => updateDraft(key, { mode: "value", text: event.target.value })} />
+                    ) : (
+                      <Input id={controlId} type={secret ? "password" : entry.type === "number" ? "number" : "text"}
+                        step={entry.type === "number" ? "any" : undefined} disabled={busy} value={draft.text}
+                        placeholder={secret ? (structured ? "Enter replacement JSON" : "Enter replacement") : draft.mode === "inherit" ? `Inherited: ${effective}` : "Global value"}
+                        className="h-7 min-w-0 max-w-sm flex-1 basis-44 font-mono text-xs" autoComplete="off" spellCheck={false}
+                        aria-describedby={describedBy} onChange={(event) => updateDraft(key, { mode: "value", text: event.target.value })} />
+                    )}
+
+                    <Button type="button" size="sm" variant={dirty ? "secondary" : "ghost"} className="text-xs"
+                      disabled={busy || !dirty} aria-label={`Save ${key}`} onClick={() => void writeSetting(key, false)}>
+                      {writing === key ? <LoaderCircle aria-hidden="true" className="size-3 animate-spin motion-reduce:animate-none" /> : <Save aria-hidden="true" className="size-3" />} Save
+                    </Button>
+                    {stored && (
+                      <Button type="button" size="sm" variant="ghost" className="text-xs text-muted-foreground"
+                        disabled={busy} title="Remove the global override" aria-label={`Reset global override for ${key}`} onClick={() => void writeSetting(key, true)}>
+                        <RotateCcw aria-hidden="true" className="size-3" /> Reset
+                      </Button>
+                    )}
+                    {entry.type === "string" && !secret && !entry.choices?.length && draft.text === "" && !stored && (
+                      <Button type="button" variant="ghost" size="sm" className="text-xs" disabled={busy || draft.mode === "value"}
+                        onClick={() => updateDraft(key, { mode: "value", text: "" })}>Use empty string</Button>
+                    )}
+                  </div>
+
+                  {dirty && <p className="text-[11px] text-muted-foreground">{draft.mode === "inherit" ? "Saving removes the global override." : draft.text === "" ? "Saving sets an explicit empty string." : "Unsaved override"}</p>}
+                  <div id={feedbackId} aria-live="polite" className="text-xs [overflow-wrap:anywhere]">
+                    {feedback?.error && <p role="alert" className="text-destructive">{feedback.error}</p>}
+                    {feedback?.success && <p role="status" className="text-muted-foreground">{feedback.success}</p>}
+                  </div>
+                </div>
+              </article>
+            );
           })}
         </div>
       </>}

@@ -12,6 +12,7 @@
 - Runtime Policy groups thinking and retry separately from compaction and model-specific thresholds. Settings stack in narrow windows, with the save action fixed below the scrolling form
 - The status row below the composer no longer shows the thinking level. It can still be changed in the session toolbar
 - `/settings` opens a full page styled like `/models`, with a section sidebar on desktop and a dropdown in narrow windows. Content fills the right pane; desktop launch preferences and runtime details sit side by side when space allows. Back returns to the previous view.
+- Native settings use compact rows with an inline editor and save controls. Choice menus follow the desktop theme and show the selected value; Reset appears only for stored overrides.
 
 ## 0.1.0 — 2026-11-06
 

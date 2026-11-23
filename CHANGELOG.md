@@ -3,14 +3,13 @@
 ## Unreleased
 
 ### Added
-- `/btw` side questions stream answers in a separate panel without touching the main transcript or queues, with follow-up support and scroll-back through prior questions
-- The side-question panel can stop an active question or close the panel from its top-right button
+- The model workspace edits global role assignments, ordered fallback chains, default thinking, and context-compaction thresholds. It shows workspace-resolved settings separately from live session values
 
 ### Changed
-- Chat drafts clear as soon as a message is sent and are restored on failure when the composer has not been edited
-- Sent messages appear in the transcript immediately and are deduplicated once omp confirms them
-- Project and Worktree switches show the conversation as soon as it is ready while sidebar history loads separately
-- Session listing keeps hidden sessions reachable when a search query or cached summary is requested
+- The empty conversation reads tips from a bundled JSON file
+- The model workspace separates the searchable catalog from global policy. The catalog groups providers by availability, uses a provider sidebar on desktop and a dropdown in narrow windows, and keeps the current model and thinking level in view
+- The model catalog shares search and list styles with the project and Worktree pickers, with compact model rows and no separate results card. Roles and fallback rules use two panes on desktop and a single pane in narrow windows. Save and cancel stay visible while editor fields scroll
+- Runtime Policy groups thinking and retry separately from compaction and model-specific thresholds. Settings stack in narrow windows, with the save action fixed below the scrolling form
 ## 0.1.0 — 2026-11-06
 
 Initial desktop client for Oh My Pi.

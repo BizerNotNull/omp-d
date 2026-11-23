@@ -6,6 +6,7 @@ import { useAppStore } from "@/lib/omp/store";
 import { sessionPathKey, useSessionNavigation } from "@/lib/omp/navigation";
 import { cn } from "@/lib/utils";
 import { worktreeName } from "./WorktreeSelector";
+import { pickerDetailClass, pickerRowClass, pickerSearchClass, pickerSearchIconClass } from "./picker-styles";
 
 export function ProjectSelector() {
   const cwd = useAppStore((state) => state.cwd);
@@ -49,8 +50,8 @@ export function ProjectSelector() {
     <PopoverContent align="start" className="w-80 max-w-[calc(100vw-24px)] gap-2">
       <PopoverTitle className="px-1 text-xs">Switch project</PopoverTitle>
       <div className="relative">
-        <Search aria-hidden="true" className="pointer-events-none absolute top-2.5 left-2 size-3.5 text-muted-foreground" />
-        <Input autoFocus role="combobox" aria-label="Search projects" aria-expanded="true" aria-controls={`${id}-projects`} aria-autocomplete="list" aria-activedescendant={projects[index] ? `${id}-${index}` : undefined} placeholder="Find a project by name or path…" value={query} onChange={(event) => setQuery(event.target.value)} className="h-8 pl-7 text-xs" onKeyDown={(event) => {
+        <Search aria-hidden="true" className={pickerSearchIconClass} />
+        <Input autoFocus role="combobox" aria-label="Search projects" aria-expanded="true" aria-controls={`${id}-projects`} aria-autocomplete="list" aria-activedescendant={projects[index] ? `${id}-${index}` : undefined} placeholder="Find a project by name or path…" value={query} onChange={(event) => setQuery(event.target.value)} className={pickerSearchClass} onKeyDown={(event) => {
           if (event.key === "ArrowDown" || event.key === "ArrowUp") {
             event.preventDefault();
             setIndex((value) => Math.max(0, Math.min(projects.length - 1, value + (event.key === "ArrowDown" ? 1 : -1))));
@@ -59,9 +60,9 @@ export function ProjectSelector() {
       </div>
       <div className="px-1 pt-1 text-[10px] text-muted-foreground">Recent projects</div>
       <div ref={listRef} id={`${id}-projects`} role="listbox" aria-label="Projects" className="max-h-72 overflow-y-auto overscroll-contain">
-        {projects.map((path, optionIndex) => <button type="button" role="option" key={sessionPathKey(path)} id={`${id}-${optionIndex}`} data-project-index={optionIndex} aria-selected={sessionPathKey(path) === sessionPathKey(current)} title={path} onMouseMove={() => setIndex(optionIndex)} onClick={() => choose(path)} className={cn("flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", index === optionIndex && "bg-muted")}>
+        {projects.map((path, optionIndex) => <button type="button" role="option" key={sessionPathKey(path)} id={`${id}-${optionIndex}`} data-project-index={optionIndex} aria-selected={sessionPathKey(path) === sessionPathKey(current)} title={path} onMouseMove={() => setIndex(optionIndex)} onClick={() => choose(path)} className={cn(pickerRowClass, "py-2.5", index === optionIndex && "bg-muted")}>
           <FolderOpen aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{worktreeName(path)}</span><span className="mt-0.5 block truncate text-[10px] text-muted-foreground">{path}</span></span>
+          <span className="min-w-0 flex-1"><span className="block truncate font-medium">{worktreeName(path)}</span><span className={cn("mt-0.5 block", pickerDetailClass)}>{path}</span></span>
           {sessionPathKey(path) === sessionPathKey(current) && <Check aria-hidden="true" className="size-3.5 shrink-0" />}
         </button>)}
         {!projects.length && <p className="px-2 py-5 text-center text-xs text-muted-foreground">No matching projects.</p>}

@@ -984,9 +984,21 @@ const runtime = create<AppState>()((set, get) => ({
   },
 
   setModel: async (provider, id) => {
+    const generation = omp.generation;
+    const revision = conversationRevision;
     try {
       const res = await omp.send<Model>({ type: "set_model", provider, modelId: id });
-      await get().refreshState();
+      if (generation !== omp.generation || revision !== conversationRevision) return false;
+      set({ thinkingLevels: [] });
+      await Promise.all([
+        get().refreshState(),
+        omp.send<{ levels: string[] }>({ type: "get_available_thinking_levels" }).then((response) => {
+          if (generation === omp.generation && revision === conversationRevision && response.data) {
+            set({ thinkingLevels: response.data.levels });
+          }
+        }, () => {}),
+      ]);
+      if (generation !== omp.generation || revision !== conversationRevision) return false;
       pushToast(set, "success", `Model set to ${modelLabel(res.data)}.`);
       return true;
     } catch (error) {

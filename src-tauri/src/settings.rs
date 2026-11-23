@@ -334,6 +334,17 @@ mod tests {
     }
 
     #[test]
+    fn preserves_fallback_rule_priority_through_settings_response() {
+        let listing: Listing = serde_json::from_str(r#"{
+            "retry.fallbackChains": {"type": "record", "description": "", "value": {
+                "zeta/*": ["bridge/*"], "alpha/*": ["other/*"]
+            }}
+        }"#).unwrap();
+        let response = serde_json::to_string(&visible_fields(&listing["retry.fallbackChains"])).unwrap();
+        assert_eq!(response, r#"{"value":{"zeta/*":["bridge/*"],"alpha/*":["other/*"]}}"#);
+    }
+
+    #[test]
     fn numbers_match_finite_native_spellings() {
         for number in ["-1.5", ".5", "1e3", "0xff", "0o17", "0b10"] {
             assert!(finite_number(number));

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { sessionPathKey, useSessionNavigation } from "@/lib/omp/navigation";
 import { useAppStore } from "@/lib/omp/store";
 import { cn } from "@/lib/utils";
+import { pickerRowClass, pickerSearchClass, pickerSearchIconClass } from "./picker-styles";
 
 export function worktreeName(cwd: string, branch?: string | null): string {
   return branch || cwd.replace(/\\/g, "/").split("/").filter(Boolean).pop() || cwd;
@@ -75,8 +76,8 @@ export function WorktreeSelector({ value, onSelect, allowAll = true, className }
       <PopoverContent align="start" className="w-72 max-w-[calc(100vw-24px)] gap-2">
         <PopoverTitle className="px-1 text-xs">{allowAll ? "Filter Worktrees" : "Task Worktree"}</PopoverTitle>
         <div className="relative">
-          <Search aria-hidden="true" className="pointer-events-none absolute top-2.5 left-2 size-3.5 text-muted-foreground" />
-          <Input autoFocus role="combobox" aria-label="Search Worktrees" aria-expanded="true" aria-controls={`${id}-list`} aria-autocomplete="list" aria-activedescendant={options[index] ? `${id}-${index}` : undefined} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search Worktrees…" className="h-8 pl-7 text-xs" onKeyDown={(event) => {
+          <Search aria-hidden="true" className={pickerSearchIconClass} />
+          <Input autoFocus role="combobox" aria-label="Search Worktrees" aria-expanded="true" aria-controls={`${id}-list`} aria-autocomplete="list" aria-activedescendant={options[index] ? `${id}-${index}` : undefined} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search Worktrees…" className={pickerSearchClass} onKeyDown={(event) => {
             if (event.key === "ArrowDown" || event.key === "ArrowUp") {
               event.preventDefault();
               setIndex((current) => Math.max(0, Math.min(options.length - 1, current + (event.key === "ArrowDown" ? 1 : -1))));
@@ -86,7 +87,7 @@ export function WorktreeSelector({ value, onSelect, allowAll = true, className }
         <div ref={listRef} id={`${id}-list`} role="listbox" aria-label="Worktrees" className="max-h-64 overflow-y-auto overscroll-contain">
           {options.map((item, optionIndex) => <div key={item.cwd}>
             {item.group && item.group !== options[optionIndex - 1]?.group && <div className="px-2 pt-3 pb-1 text-[10px] text-muted-foreground">{item.group}</div>}
-            <button type="button" role="option" id={`${id}-${optionIndex}`} data-option-index={optionIndex} aria-selected={sessionPathKey(value) === sessionPathKey(item.cwd)} title={item.cwd} className={cn("flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-xs focus-visible:ring-2 focus-visible:ring-ring", index === optionIndex && "bg-muted")} onMouseMove={() => setIndex(optionIndex)} onClick={() => choose(item.cwd)}>
+            <button type="button" role="option" id={`${id}-${optionIndex}`} data-option-index={optionIndex} aria-selected={sessionPathKey(value) === sessionPathKey(item.cwd)} title={item.cwd} className={cn(pickerRowClass, "py-2", index === optionIndex && "bg-muted")} onMouseMove={() => setIndex(optionIndex)} onClick={() => choose(item.cwd)}>
               <GitBranch aria-hidden="true" className="size-3 shrink-0 text-muted-foreground" /><span className="min-w-0 flex-1 truncate">{item.label}</span>
               {sessionPathKey(value) === sessionPathKey(item.cwd) && <Check aria-hidden="true" className="size-3 shrink-0" />}
             </button>

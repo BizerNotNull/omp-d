@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { Markdown } from "./Markdown";
 import { ToolCard } from "./ToolCard";
 import { ContentImage } from "./ContentImage";
+import welcomeTips from "./tips.json";
 
 function isToolResult(message: AgentMessage): message is ToolResultMessage {
   return message.role === "toolResult";
@@ -394,16 +395,6 @@ function SystemNote({ message }: { message: AgentMessage }) {
   return null;
 }
 
-// Adapted from oh-my-pi/packages/tui/src/prompt/tips.txt; omit TUI-only controls.
-const welcomeTips = [
-  <>Type <code className="font-mono text-foreground">/</code> at the start of your prompt to browse commands.</>,
-  <>Add <code className="font-mono text-foreground">ultrathink</code> for harder multi-step reasoning.</>,
-  <>Say <code className="font-mono text-foreground">chillax</code> to lower thinking effort on supported models.</>,
-  <>Say <code className="font-mono text-foreground">orchestrate</code> for a multi-phase task with parallel subagents.</>,
-  <>Classifying a large batch? Ask for <code className="font-mono text-foreground">jevify</code>.</>,
-  <>Oh My Pi can extend itself — ask it to add the tools you need.</>,
-];
-
 export function TranscriptEmpty() {
   const [tipIndex, setTipIndex] = useState(() => Math.floor(Math.random() * welcomeTips.length));
   return (
@@ -431,9 +422,12 @@ export function TranscriptEmpty() {
               </Button>
             </div>
           </div>
-          <p aria-live="polite" aria-atomic="true" className="min-h-12 text-sm leading-6 text-muted-foreground">
-            {welcomeTips[tipIndex]}
-          </p>
+          <div aria-live="polite" aria-atomic="true">
+            <Markdown
+              className="min-h-12 text-sm leading-6 text-muted-foreground"
+              text={welcomeTips[tipIndex].replace(/^\[NO-TERN\] /, "").replace(/\{(?:key|tap):([^}]+)\}/g, "`$1`")}
+            />
+          </div>
         </div>
       </div>
     </section>

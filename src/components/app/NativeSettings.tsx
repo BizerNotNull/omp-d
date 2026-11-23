@@ -4,7 +4,6 @@ import { LoaderCircle, RotateCcw, Save, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAppStore } from "@/lib/omp/store";
 import { invalidateCatalog, splitExtraArgs } from "@/lib/omp/model-catalog";
 import type { StartOptions } from "@/lib/omp/types";
@@ -21,6 +20,7 @@ import {
 } from "@/lib/omp/native-settings";
 import { cn } from "@/lib/utils";
 import { pickerSearchClass, pickerSearchIconClass } from "./picker-styles";
+import { SettingsSelect, SettingsSelectOption } from "./SettingsSelect";
 
 interface RowFeedback {
   error?: string;
@@ -274,27 +274,16 @@ export function NativeSettings({ active }: { active: boolean }) {
 
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
                     {!!choiceValues?.length && !secret ? (
-                      <Select value={selected} disabled={busy} onValueChange={(value) => {
-                        if (value !== null) updateDraft(key, value === "inherit" ? { mode: "inherit", text: "" } : { mode: "value", text: value.slice(6) });
-                      }}>
-                        <SelectTrigger size="sm" id={controlId} aria-describedby={describedBy}
-                          className="w-40 max-w-full min-w-0 gap-2 bg-background text-xs data-popup-open:bg-muted [&>svg]:size-3.5 [&>svg]:shrink-0">
-                          <SelectValue className="min-w-0"><span className="min-w-0 truncate">{choiceLabel}</span></SelectValue>
-                        </SelectTrigger>
-                        <SelectContent align="start" alignItemWithTrigger={false} className="scroll-thin p-1 motion-reduce:animate-none">
-                          <SelectItem value="inherit" className="min-h-7 px-2 pr-7 text-xs">Inherit</SelectItem>
-                          {draft.mode === "value" && !choiceValues.includes(draft.text) && (
-                            <SelectItem value={selected} className="min-h-7 px-2 pr-7 text-xs">
-                              <span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{choiceLabel} (stored)</span>
-                            </SelectItem>
-                          )}
-                          {choiceValues.map((choice) => (
-                            <SelectItem key={choice} value={`value:${choice}`} className="min-h-7 px-2 pr-7 text-xs">
-                              <span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{choice || '"" (empty string)'}</span>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <SettingsSelect id={controlId} aria-describedby={describedBy} value={selected} label={choiceLabel} disabled={busy}
+                        onValueChange={(value) => updateDraft(key, value === "inherit" ? { mode: "inherit", text: "" } : { mode: "value", text: value.slice(6) })}>
+                        <SettingsSelectOption value="inherit">Inherit</SettingsSelectOption>
+                        {draft.mode === "value" && !choiceValues.includes(draft.text) && (
+                          <SettingsSelectOption value={selected}>{choiceLabel} (stored)</SettingsSelectOption>
+                        )}
+                        {choiceValues.map((choice) => (
+                          <SettingsSelectOption key={choice} value={`value:${choice}`}>{choice || '"" (empty string)'}</SettingsSelectOption>
+                        ))}
+                      </SettingsSelect>
                     ) : structured && !secret ? (
                       <textarea id={controlId} rows={4} className={textareaClass} disabled={busy} value={draft.text}
                         placeholder={`Enter a JSON ${entry.type === "array" ? "array" : "object"}`} aria-describedby={describedBy} spellCheck={false}

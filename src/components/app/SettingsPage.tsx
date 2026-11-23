@@ -1,21 +1,30 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { ArrowLeft, Copy, FolderCog, LoaderCircle, RotateCcw, Save, Square } from "lucide-react";
 import { invoke } from "@/lib/diagnostics";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
 import { useAppStore, loadPreferences, type Preferences } from "@/lib/omp/store";
 import { cn } from "@/lib/utils";
 import { NativeSettings } from "./NativeSettings";
 import { pickerRowClass } from "./picker-styles";
+import { SettingsSelect, SettingsSelectOption } from "./SettingsSelect";
 
 const sections = {
   native: "Oh My Pi",
   desktop: "Desktop & runtime",
 } as const;
 type SettingsSection = keyof typeof sections;
+
+const sectionIds = ["native", "desktop"] as const;
+const themeLabels = { light: "Light", dark: "Dark" } as const;
+const launchFields = [
+  { key: "binary", id: "omp-binary", label: "omp binary", hint: "Resolved from PATH unless an absolute path is given.", placeholder: "omp" },
+  { key: "model", id: "omp-model", label: "Initial model", hint: "Leave blank to restore the session model or use the default role.", placeholder: "provider/model-id" },
+  { key: "extraArgs", id: "omp-args", label: "Extra arguments", hint: "Passed to omp when it starts.", placeholder: "--hide-thinking --no-lsp" },
+] as const;
+const launchRowClass = "grid min-w-0 items-center gap-1.5 py-2 @min-[22rem]:grid-cols-2 @min-[22rem]:gap-3";
 
 export function SettingsPage({ onClose }: { onClose: () => void }) {
   const updatePreferences = useAppStore((state) => state.updatePreferences);
@@ -29,6 +38,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
   const [draft, setDraft] = useState<Preferences>(loadPreferences);
   const [applyBusy, setApplyBusy] = useState(false);
   const [section, setSection] = useState<SettingsSection>("native");
+  const themeId = useId();
   const headingRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
@@ -77,16 +87,14 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         <nav aria-label="Settings sections" className="shrink-0 border-b border-sidebar-border bg-sidebar/40 px-3 py-2 md:w-40 md:border-r md:border-b-0 md:p-0 lg:w-44">
-          <select aria-label="Settings section" value={section} disabled={applyBusy}
-            onChange={(event) => setSection(event.target.value as SettingsSection)}
-            className="h-8 w-full min-w-0 rounded-md border border-input bg-background px-2 text-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-50 md:hidden">
-            <option value="native">{sections.native}</option>
-            <option value="desktop">{sections.desktop}</option>
-          </select>
+          <SettingsSelect aria-label="Settings section" value={section} label={sections[section]}
+            disabled={applyBusy} onValueChange={setSection} className="w-full md:hidden">
+            {sectionIds.map((id) => <SettingsSelectOption key={id} value={id}>{sections[id]}</SettingsSelectOption>)}
+          </SettingsSelect>
           <div className="hidden md:block">
             <h2 className="px-3 pt-3 pb-1.5 text-[11px] font-medium text-muted-foreground">Sections</h2>
             <div className="space-y-0.5 px-2 pb-2">
-              {(["native", "desktop"] as const).map((id) => (
+              {sectionIds.map((id) => (
                 <button key={id} type="button" aria-current={section === id ? "true" : undefined}
                   aria-controls={`settings-${id}`} onClick={() => setSection(id)} disabled={applyBusy}
                   className={cn(pickerRowClass, "min-h-7 disabled:opacity-50",
@@ -110,64 +118,29 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
 
           <section id="settings-desktop" aria-labelledby="settings-section-title" hidden={section !== "desktop"} className="@container scroll-thin min-h-0 flex-1 overflow-y-auto overscroll-contain">
             <div className="grid divide-y @min-[48rem]:grid-cols-2 @min-[48rem]:divide-x @min-[48rem]:divide-y-0">
-              <div className="min-w-0 space-y-3 p-3">
+              <div className="@container min-w-0 space-y-2 p-3">
                 <h3 className="text-xs font-medium">Launch preferences</h3>
-                <p className="text-xs text-muted-foreground">Launch preferences are stored by omp-d. Save &amp; restart applies them to the agent while preserving the current session.</p>
-                <div className="grid gap-3">
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="omp-binary">omp binary</Label>
-                    <Input
-                      id="omp-binary"
-                      value={draft.binary}
-                      onChange={(event) => setDraft({ ...draft, binary: event.target.value })}
-                      placeholder="omp"
-                      className="font-mono text-[12px]"
-                    />
-                    <p className="text-[10.5px] text-muted-foreground">
-                      Resolved from PATH unless an absolute path is given.
-                    </p>
-                  </div>
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="omp-model">Initial model</Label>
-                    <Input
-                      id="omp-model"
-                      value={draft.model}
-                      onChange={(event) => setDraft({ ...draft, model: event.target.value })}
-                      placeholder="Optional, e.g. anthropic/claude-sonnet-4-5"
-                      className="font-mono text-[12px]"
-                    />
-                    <p className="text-[10.5px] text-muted-foreground">
-                      Leave empty to let omp restore the session model or its default role.
-                    </p>
-                  </div>
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="omp-args">Extra arguments</Label>
-                    <Input
-                      id="omp-args"
-                      value={draft.extraArgs}
-                      onChange={(event) => setDraft({ ...draft, extraArgs: event.target.value })}
-                      placeholder="--hide-thinking --no-lsp"
-                      className="font-mono text-[12px]"
-                    />
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <Label>Theme</Label>
-                    <div className="inline-flex rounded-lg border p-0.5">
-                      {(["dark", "light"] as const).map((theme) => (
-                        <button
-                          key={theme}
-                          type="button"
-                          aria-pressed={draft.theme === theme}
-                          onClick={() => setDraft({ ...draft, theme })}
-                          className={cn(
-                            "rounded-md px-2.5 py-1 text-[11px] capitalize transition-colors",
-                            draft.theme === theme ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground",
-                          )}
-                        >
-                          {theme}
-                        </button>
-                      ))}
+                <p className="text-xs text-muted-foreground">Save &amp; restart applies these preferences and preserves the current session.</p>
+                <div className="divide-y border-y">
+                  {launchFields.map(({ key, id, label, hint, placeholder }) => (
+                    <div key={key} className={launchRowClass}>
+                      <div className="space-y-1">
+                        <Label htmlFor={id} className="text-xs">{label}</Label>
+                        <p id={`${id}-hint`} className="text-xs text-muted-foreground">{hint}</p>
+                      </div>
+                      <Input id={id} aria-describedby={`${id}-hint`} value={draft[key]} disabled={applyBusy}
+                        onChange={(event) => setDraft({ ...draft, [key]: event.target.value })} placeholder={placeholder}
+                        autoComplete="off" spellCheck={false}
+                        className="h-7 min-w-0 max-w-72 bg-background font-mono text-xs md:text-xs @min-[22rem]:justify-self-end" />
                     </div>
+                  ))}
+                  <div className={launchRowClass}>
+                    <Label htmlFor={themeId} className="text-xs">Theme</Label>
+                    <SettingsSelect id={themeId} value={draft.theme} label={themeLabels[draft.theme]} disabled={applyBusy}
+                      onValueChange={(theme) => setDraft({ ...draft, theme })} className="@min-[22rem]:justify-self-end">
+                      <SettingsSelectOption value="light">{themeLabels.light}</SettingsSelectOption>
+                      <SettingsSelectOption value="dark">{themeLabels.dark}</SettingsSelectOption>
+                    </SettingsSelect>
                   </div>
                 </div>
               </div>
@@ -175,69 +148,55 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
               <div className="min-w-0 space-y-4 p-3">
                 <div className="space-y-2">
                   <h3 className="text-xs font-medium">Runtime</h3>
-                  <div className="grid gap-1 overflow-hidden rounded-lg border bg-muted/20 p-2.5 font-mono text-[10.5px] text-muted-foreground">
-                    <div className="flex min-w-0 items-baseline gap-4">
-                      <span className="shrink-0">command</span>
-                      <span className="min-w-0 flex-1 truncate text-right text-foreground/80">{startInfo?.program ?? "—"}</span>
-                    </div>
-                    <div className="flex min-w-0 items-baseline gap-4">
-                      <span className="shrink-0">args</span>
-                      <span className="min-w-0 flex-1 truncate text-right text-foreground/80">{startInfo?.args.join(" ") ?? "—"}</span>
-                    </div>
-                    <div className="flex min-w-0 items-baseline gap-4">
-                      <span className="shrink-0">pid / generation</span>
-                      <span className="min-w-0 flex-1 truncate text-right text-foreground/80">
-                        {startInfo ? `${startInfo.pid} / ${startInfo.generation}` : "—"}
-                      </span>
-                    </div>
-                    <div className="flex min-w-0 items-baseline gap-4">
-                      <span className="shrink-0">protocol</span>
-                      <span className="min-w-0 flex-1 truncate text-right text-foreground/80">
-                        {protocolVersion !== undefined ? `v${protocolVersion} → v2 frames` : "—"}
-                      </span>
-                    </div>
-                    <div className="flex min-w-0 items-baseline gap-4">
-                      <span className="shrink-0">session file</span>
-                      <span className="min-w-0 flex-1 truncate text-right text-foreground/80">{session?.sessionFile ?? "unsaved"}</span>
-                    </div>
-                  </div>
+                  <p className="text-xs text-muted-foreground">Current agent process and session.</p>
+                  <dl className="divide-y border-y text-xs">
+                    {[
+                      ["Command", startInfo?.program ?? "—"],
+                      ["Arguments", startInfo?.args.join(" ") ?? "—"],
+                      ["PID / generation", startInfo ? `${startInfo.pid} / ${startInfo.generation}` : "—"],
+                      ["Protocol", protocolVersion !== undefined ? `v${protocolVersion} → v2 frames` : "—"],
+                      ["Session file", session?.sessionFile ?? "Unsaved"],
+                    ].map(([label, value]) => (
+                      <div key={label} className="grid min-w-0 grid-cols-[7rem_minmax(0,1fr)] items-baseline gap-2 py-2">
+                        <dt className="text-muted-foreground">{label}</dt>
+                        <dd className="font-mono [overflow-wrap:anywhere]">{value}</dd>
+                      </div>
+                    ))}
+                  </dl>
                   <div className="flex flex-wrap gap-2">
-                    <Button variant="outline" size="sm" className="gap-1.5" onClick={() => void openSessionsFolder()}>
-                      <FolderCog className="size-3.5" /> Sessions folder
+                    <Button variant="ghost" size="sm" className="text-xs" onClick={() => void openSessionsFolder()}>
+                      <FolderCog aria-hidden="true" className="size-3.5" /> Sessions folder
                     </Button>
                     <Button
-                      variant="outline"
+                      variant="ghost"
                       size="sm"
-                      className="gap-1.5"
+                      className="text-xs"
                       disabled={!session?.sessionFile}
                       onClick={() => void navigator.clipboard.writeText(session?.sessionFile ?? "")}
                     >
-                      <Copy className="size-3.5" /> Copy path
+                      <Copy aria-hidden="true" className="size-3.5" /> Copy path
                     </Button>
                     <Button
-                      variant="outline"
+                      variant="ghost"
                       size="sm"
-                      className="gap-1.5 text-destructive"
+                      className="text-xs text-destructive"
                       onClick={() => void disconnect()}
                     >
-                      <Square className="size-3 fill-current" /> Stop agent
+                      <Square aria-hidden="true" className="size-3 fill-current" /> Stop agent
                     </Button>
                   </div>
                 </div>
 
                 {diagnostics.length > 0 && (
-                  <>
-                    <Separator />
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-medium">stderr</span>
-                        <span className="text-[10px] text-muted-foreground">{diagnostics.length} lines</span>
-                      </div>
-                      <pre className="scroll-thin max-h-40 overflow-auto rounded-lg border bg-muted/20 p-2 font-mono text-[10px] leading-relaxed whitespace-pre-wrap break-words text-muted-foreground">
-                        {diagnostics.slice(-40).join("\n")}
-                      </pre>
+                  <div className="space-y-1.5 border-t pt-3">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xs font-medium">stderr</h3>
+                      <span className="text-[11px] text-muted-foreground">{diagnostics.length} lines</span>
                     </div>
-                  </>
+                    <pre className="scroll-thin max-h-40 overflow-auto rounded-md bg-muted/40 p-2 font-mono text-xs whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">
+                      {diagnostics.slice(-40).join("\n")}
+                    </pre>
+                  </div>
                 )}
               </div>
             </div>
@@ -246,10 +205,10 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
           <footer className="shrink-0 border-t bg-card">
             <div className="flex flex-wrap justify-end gap-2 px-3 py-2">
               {section === "desktop" ? <>
-                <Button variant="outline" size="sm" onClick={() => setDraft(loadPreferences())} disabled={applyBusy}>
+                <Button variant="ghost" size="sm" className="text-xs" onClick={() => setDraft(loadPreferences())} disabled={applyBusy}>
                   <RotateCcw aria-hidden="true" className="size-3.5" /> Revert
                 </Button>
-                <Button size="sm" onClick={() => void applyAndRestart()} disabled={applyBusy}>
+                <Button size="sm" className="text-xs" onClick={() => void applyAndRestart()} disabled={applyBusy}>
                   {applyBusy ? <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" /> : <Save aria-hidden="true" className="size-3.5" />}
                   Save &amp; restart
                 </Button>

@@ -1,33 +1,17 @@
 # omp-d
 
-A desktop window for [Oh My Pi](https://github.com/can1357/oh-my-pi) — the `omp` coding agent. Built with Tauri 2, React 19, Rust, and shadcn/ui on Base UI.
+> This is a vibe coding project.
 
-The app spawns a local `omp --mode rpc-ui` process and speaks its newline-delimited JSON RPC protocol over stdio. Sessions, tools, TODOs, artifacts and settings remain in Oh My Pi's own storage; the window is a client, not a replacement runtime.
+A desktop GUI for [Oh My Pi](https://github.com/can1357/oh-my-pi)
 
-![omp-d](docs/screenshot.png)
+This app is designed to remain independent of the OMP process.It’s just that the current memory usage and performance aren’t quite good enough yet.
 
 ## Features
 
-- Streaming chat with assistant text, thinking blocks, tool calls, ANSI-stripped terminal output, and edit diffs.
-- Inline raster/SVG image blocks, SVG and Mermaid code-fence figures, and previews of written `.svg`, `.mmd` and `.mermaid` files. SVG figures resolve OMP theme tokens and remain isolated from app HTML. Numeric comparison tables get a supplemental chart when their values have compatible units; ambiguous tables remain tables. Figures render while SVG source streams; incomplete Mermaid and invalid figures retain readable source.
-- Session browser: resume/switch existing sessions, start new ones, rename, and reopen the active session after a restart or crash.
-- Message forks use omp's `/tree` mechanism in the current session file: the pencil edits a sent user message, and **Save & fork** sends that edited prompt to the running agent. Later prompts continue that branch normally. Original replies remain in the same session and can be restored with the arrows beside `1/3`; switching does not regenerate them. Cancel leaves history unchanged; attachments are retained. Editing and switching wait until the agent and its queues are idle.
-- Shared `/model` and `/models` page with providers on the left, configured roles and models on the right, model-kind filters, search, keyboard navigation, and live-session switching. Project/profile-scoped cached catalogs render immediately; CLI discovery refreshes in the background. Role queries use project/profile settings; `--config` role overlays are unsupported by the CLI and produce a visible warning.
-- Unauthenticated/unavailable providers remain visible below available providers. Their full registry catalogs can be browsed, but model selection stays disabled until credentials/configuration are ready and the catalog is refreshed.
-- Composer with Enter/Shift+Enter, steering and follow-up queues, queued-message chips, Esc abort, image paste, and slash-command autocomplete.
-- Goal commands: `/goal <objective>` or `/goal set <objective>` starts a goal; `/goal` and `/goal show` display it; `/goal pause`, `/goal resume`, and `/goal drop` manage its lifecycle. Inspector shows the objective and task progress. Budget editing and `/guided-goal` require runtime RPC operations that are not currently available.
-- Extension UI dialogs for `select`, `confirm`, `input`, `editor` and `ask`, plus `notify`, status marks and widgets.
-- Compact Inspector with goal/task progress, Main activity, live subagent status and tool activity, Git file summaries, and a context footer. Tasks, agents, and file diffs open in the main workspace. Click **Context** to see token counts and estimated cost in a popover. Completed agents collapse into a count. Short windows reduce row detail.
-- Click **Plan usage** above **Context**, or enter `/usage`, to see account quotas and reset times without sending a message. The popover uses the configured omp’s `usage --json` command. Multiple accounts are listed separately because omp’s desktop RPC does not identify the account selected for a request.
-- Changes can be filtered to files with recorded successful session edits or the full working tree. Both scopes show the current net Git diff against HEAD, including staged/unstaged edits; session scope is file attribution, not a session-only patch. Shell-based edits without structured file metadata cannot be attributed. Git queries are read-only and bounded; binary files and oversized diffs are reported explicitly.
-- Embedded PTY terminal with shell tabs, scrollback, drag/keyboard resizing, maximize/restore, and `Ctrl+backtick` (`Cmd+backtick` on macOS). Hidden terminals keep running.
-- `/settings` opens a full-page editor. Select **Oh My Pi** to search the configured runtime’s settings and save or reset individual global overrides. Effective project and environment values are shown separately from global drafts; credentials are masked. Select **Desktop & runtime** for launch preferences and agent diagnostics.
-- Process supervision: v1/v2 RPC framing, chunk reassembly, crash detection, clean shutdown, and restart that preserves the current session.
-- Streaming chat with live tool output.
-- Resume sessions across Git worktrees and switch between conversation branches.
-- Paste images into chat.
-- Open terminal tabs in the current workspace.
-- Choose models and edit Oh My Pi settings.
+- One of the ultimate goals is to support all TUI slash commands. For now, I’ve implemented support for the ones I use most frequently.
+- I have a multi-session implementation that I personally think is quite good, but it’s not very well-suited for development that spans multiple project directories.
+- Added special support for bar charts and Mermaid diagrams returned by the agent.
+- Some slash commands that have been specially optimized: `/models`, `/btw`, `/settings`, `/usage`, and `/wt`. These commands do indeed have an advantage in a GUI compared to a TUI.
 
 ## Requirements
 
@@ -37,6 +21,8 @@ The app spawns a local `omp --mode rpc-ui` process and speaks its newline-delimi
 - Linux/macOS need the usual [Tauri prerequisites](https://tauri.app/start/prerequisites/); this repository is developed and tested on Windows.
 
 ## Run it
+
+A release workflow has not been set up yet; for now, it is only available by building from source code.
 
 ```bash
 bun install
@@ -50,11 +36,6 @@ rewrites the source checkout, the desktop window and its agent stay running;
 the app updates workspace data in place. Restart the development app after
 source changes. Use `bunx tauri dev` to opt into both watchers, or `bun run dev`
 for frontend-only hot reload.
-
-To enable Rust code navigation in omp, install `rust-analyzer` with
-`rustup component add rust-analyzer`. The project LSP config in
-`.omp/lsp.json` points to `src-tauri/Cargo.toml`. If omp is already running,
-reload its language servers after installing the component.
 
 ## Build
 

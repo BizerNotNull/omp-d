@@ -3,18 +3,10 @@
 ## Unreleased
 
 ### Added
-- The model workspace edits global role assignments, ordered fallback chains, default thinking, and context-compaction thresholds. It shows workspace-resolved settings separately from live session values
+- Noted that the app is only available by building from source until a release workflow is set up
 
 ### Changed
-- The empty conversation reads tips from a bundled JSON file
-- The model workspace separates the searchable catalog from global policy. The catalog groups providers by availability, uses a provider sidebar on desktop and a dropdown in narrow windows, and keeps the current model and thinking level in view
-- The model catalog shares search and list styles with the project and Worktree pickers, with compact model rows and no separate results card. Roles and fallback rules use two panes on desktop and a single pane in narrow windows. Save and cancel stay visible while editor fields scroll
-- Runtime Policy groups thinking and retry separately from compaction and model-specific thresholds. Settings stack in narrow windows, with the save action fixed below the scrolling form
-- The status row below the composer no longer shows the thinking level. It can still be changed in the session toolbar
-- `/settings` opens a full page styled like `/models`, with a section sidebar on desktop and a dropdown in narrow windows. Content fills the right pane; desktop launch preferences and runtime details sit side by side when space allows. Back returns to the previous view.
-- Native settings use compact rows with an inline editor and save controls. Choice menus follow the desktop theme and show the selected value; Reset appears only for stored overrides.
-- Desktop launch preferences and runtime details use the same compact row style. Theme and narrow-window section menus share the native settings picker.
-
+- Rewrote README with a shorter project description, notes on currently supported slash commands, and the existing limitations
 ## 0.1.0 — 2026-11-06
 
 Initial desktop client for Oh My Pi.

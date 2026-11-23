@@ -23,6 +23,11 @@ The app spawns a local `omp --mode rpc-ui` process and speaks its newline-delimi
 - Embedded PTY terminal with shell tabs, scrollback, drag/keyboard resizing, maximize/restore, and `Ctrl+backtick` (`Cmd+backtick` on macOS). Hidden terminals keep running.
 - `/settings` opens a full-page editor. Select **Oh My Pi** to search the configured runtime’s settings and save or reset individual global overrides. Effective project and environment values are shown separately from global drafts; credentials are masked. Select **Desktop & runtime** for launch preferences and agent diagnostics.
 - Process supervision: v1/v2 RPC framing, chunk reassembly, crash detection, clean shutdown, and restart that preserves the current session.
+- Streaming chat with live tool output.
+- Resume sessions across Git worktrees and switch between conversation branches.
+- Paste images into chat.
+- Open terminal tabs in the current workspace.
+- Choose models and edit Oh My Pi settings.
 
 ## Requirements
 

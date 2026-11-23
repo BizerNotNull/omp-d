@@ -67,7 +67,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
       }
     }}>
       <header className="shrink-0 border-b bg-card">
-        <div className="mx-auto flex min-h-12 w-full max-w-screen-2xl items-center gap-2 px-3 md:px-5">
+        <div className="flex min-h-12 items-center gap-2 px-3 md:px-5">
           <Button variant="ghost" size="icon-sm" aria-label="Back from settings" title="Back from settings (Esc)" onClick={onClose} disabled={applyBusy}>
             <ArrowLeft aria-hidden="true" className="size-4" />
           </Button>
@@ -75,7 +75,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
         </div>
       </header>
 
-      <div className="mx-auto flex min-h-0 w-full max-w-screen-2xl flex-1 flex-col md:flex-row">
+      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         <nav aria-label="Settings sections" className="shrink-0 border-b border-sidebar-border bg-sidebar/40 px-3 py-2 md:w-40 md:border-r md:border-b-0 md:p-0 lg:w-44">
           <select aria-label="Settings section" value={section} disabled={applyBusy}
             onChange={(event) => setSection(event.target.value as SettingsSection)}
@@ -103,14 +103,15 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
             <h2 id="settings-section-title" className="text-xs font-medium">{sections[section]}</h2>
           </div>
           <section id="settings-native" aria-labelledby="settings-section-title" hidden={section !== "native"} className="scroll-thin min-h-0 flex-1 overflow-y-auto overscroll-contain">
-            <div className="max-w-4xl px-3 py-3">
+            <div className="px-3 py-3">
               <NativeSettings active={section === "native"} />
             </div>
           </section>
 
-          <section id="settings-desktop" aria-labelledby="settings-section-title" hidden={section !== "desktop"} className="scroll-thin min-h-0 flex-1 overflow-y-auto overscroll-contain">
-            <div className="px-3 py-3">
-              <div className="max-w-2xl space-y-4">
+          <section id="settings-desktop" aria-labelledby="settings-section-title" hidden={section !== "desktop"} className="@container scroll-thin min-h-0 flex-1 overflow-y-auto overscroll-contain">
+            <div className="grid divide-y @min-[48rem]:grid-cols-2 @min-[48rem]:divide-x @min-[48rem]:divide-y-0">
+              <div className="min-w-0 space-y-3 p-3">
+                <h3 className="text-xs font-medium">Launch preferences</h3>
                 <p className="text-xs text-muted-foreground">Launch preferences are stored by omp-d. Save &amp; restart applies them to the agent while preserving the current session.</p>
                 <div className="grid gap-3">
                   <div className="grid gap-1.5">
@@ -169,11 +170,11 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                     </div>
                   </div>
                 </div>
+              </div>
 
-                <Separator />
-
+              <div className="min-w-0 space-y-4 p-3">
                 <div className="space-y-2">
-                  <div className="text-[11px] font-medium">Runtime</div>
+                  <h3 className="text-xs font-medium">Runtime</h3>
                   <div className="grid gap-1 overflow-hidden rounded-lg border bg-muted/20 p-2.5 font-mono text-[10.5px] text-muted-foreground">
                     <div className="flex min-w-0 items-baseline gap-4">
                       <span className="shrink-0">command</span>

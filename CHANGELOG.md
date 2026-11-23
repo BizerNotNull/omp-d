@@ -11,6 +11,7 @@
 - The model catalog shares search and list styles with the project and Worktree pickers, with compact model rows and no separate results card. Roles and fallback rules use two panes on desktop and a single pane in narrow windows. Save and cancel stay visible while editor fields scroll
 - Runtime Policy groups thinking and retry separately from compaction and model-specific thresholds. Settings stack in narrow windows, with the save action fixed below the scrolling form
 - The status row below the composer no longer shows the thinking level. It can still be changed in the session toolbar
+- `/settings` opens a full page styled like `/models`, with a section sidebar on desktop and a dropdown in narrow windows. Back returns to the previous view.
 
 ## 0.1.0 — 2026-11-06
 

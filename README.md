@@ -21,7 +21,7 @@ The app spawns a local `omp --mode rpc-ui` process and speaks its newline-delimi
 - Click **Plan usage** above **Context**, or enter `/usage`, to see account quotas and reset times without sending a message. The popover uses the configured omp’s `usage --json` command. Multiple accounts are listed separately because omp’s desktop RPC does not identify the account selected for a request.
 - Changes can be filtered to files with recorded successful session edits or the full working tree. Both scopes show the current net Git diff against HEAD, including staged/unstaged edits; session scope is file attribution, not a session-only patch. Shell-based edits without structured file metadata cannot be attributed. Git queries are read-only and bounded; binary files and oversized diffs are reported explicitly.
 - Embedded PTY terminal with shell tabs, scrollback, drag/keyboard resizing, maximize/restore, and `Ctrl+backtick` (`Cmd+backtick` on macOS). Hidden terminals keep running.
-- Native `/settings` editor: searchable catalog from the configured omp installation, native categories and enum choices, typed scalar/JSON editors, masked credentials, and per-setting global Save/Reset. Effective project/environment values are shown separately from global drafts. Desktop launch preferences remain in a separate tab.
+- `/settings` opens a full-page editor. Select **Oh My Pi** to search the configured runtime’s settings and save or reset individual global overrides. Effective project and environment values are shown separately from global drafts; credentials are masked. Select **Desktop & runtime** for launch preferences and agent diagnostics.
 - Process supervision: v1/v2 RPC framing, chunk reassembly, crash detection, clean shutdown, and restart that preserves the current session.
 
 ## Requirements
@@ -59,17 +59,17 @@ bun tauri build --no-bundle # release binary without installers
 bun tauri build            # installers (MSI/NSIS on Windows)
 ```
 
-The bundled app expects `omp` on `PATH` unless the Settings dialog stores a different binary.
+The bundled app expects `omp` on `PATH` unless **Desktop & runtime** in Settings specifies a different binary.
 
 Open Settings from the toolbar, `Ctrl+,` (`Cmd+,` on macOS), or `/settings`.
-The Oh My Pi tab reads every option exposed by `omp config list --json`,
+The **Oh My Pi** section reads every option exposed by `omp config list --json`,
 including options outside the TUI's usual tabs. Save writes to native global
 `config.yml`; Reset removes that global override without changing project
 configuration. Reload discards unsaved drafts. Restart the agent after saving
 to apply changes to the running session. Terminal appearance options configure
 the TUI, not the desktop renderer. Launcher `--config` overlays cannot be edited
 or included in queries through the native config CLI; the page warns when used.
-The Desktop & runtime tab retains binary, model, extra arguments, theme and
+The **Desktop & runtime** section has binary, model, extra arguments, theme and
 process diagnostics.
 
 ## Embedded terminal

@@ -19,6 +19,7 @@ import {
   type NativeSettingWriteResult,
 } from "@/lib/omp/native-settings";
 import { cn } from "@/lib/utils";
+import { pickerSearchClass, pickerSearchIconClass } from "./picker-styles";
 
 interface RowFeedback {
   error?: string;
@@ -198,7 +199,7 @@ export function NativeSettings({ active }: { active: boolean }) {
     <section className="min-w-0 space-y-3" aria-label="Native Oh My Pi settings" aria-busy={busy}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1 space-y-1 text-[11px] text-muted-foreground">
-          <p>Native Oh My Pi configuration. Each Save writes one global override; Reset removes it. Opening this tab writes nothing.</p>
+          <p>Native Oh My Pi configuration. Each Save writes one global override; Reset removes it. Opening this section writes nothing.</p>
           <p>Effective values include project settings and environment. Drafts use only stored global values. Changes require an agent restart; nothing restarts automatically.</p>
           <p>Terminal-only options configure native omp, not the desktop renderer.</p>
           <p className="break-all">Saved launch scope: {options?.binary ?? "omp"} · {cwd ?? "No project selected"}</p>
@@ -217,8 +218,8 @@ export function NativeSettings({ active }: { active: boolean }) {
         </div>
       ) : visibleCatalog && <>
         <div className="relative">
-          <Search className="pointer-events-none absolute top-2.5 left-3 size-3.5 text-muted-foreground" />
-          <Input aria-label="Search native setting keys and descriptions" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search keys and descriptions…" className="pl-9 text-xs" />
+          <Search aria-hidden="true" className={pickerSearchIconClass} />
+          <Input aria-label="Search native setting keys and descriptions" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search keys and descriptions…" className={pickerSearchClass} />
         </div>
         <div className="flex flex-wrap gap-1" role="group" aria-label="Native setting categories">
           {[undefined, ...groups].map((name) => <button key={name ?? "all"} type="button" aria-pressed={selectedGroup === name} onClick={() => setGroup(name)} className={cn("rounded-md border px-2 py-1 text-[11px] transition-colors", selectedGroup === name ? "border-primary/30 bg-muted text-foreground" : "border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground")}>

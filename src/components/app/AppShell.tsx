@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "./Sidebar";
@@ -12,7 +12,7 @@ import { Welcome } from "./Welcome";
 import { Toasts } from "./Toasts";
 import { ModelPicker } from "./ModelPicker";
 import { ProviderLogin } from "./ProviderLogin";
-import { SettingsDialog } from "./SettingsDialog";
+import { SettingsPage } from "./SettingsPage";
 import { catalogCacheKey, invalidateCatalog, splitExtraArgs } from "@/lib/omp/model-catalog";
 import { usePlanUsage } from "@/lib/omp/plan-usage";
 import { useAppStore } from "@/lib/omp/store";
@@ -79,12 +79,17 @@ export function AppShell() {
     document.documentElement.classList.toggle("light", theme === "light");
   }, [theme]);
 
+  const openSettings = useCallback(() => {
+    setUsageOpen(false);
+    setSettingsOpen(true);
+  }, []);
+
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key === ",") {
         event.preventDefault();
-        setSettingsOpen(true);
-      } else if ((event.ctrlKey || event.metaKey) && event.code === "Backquote" && !event.altKey) {
+        openSettings();
+      } else if (!settingsOpen && (event.ctrlKey || event.metaKey) && event.code === "Backquote" && !event.altKey) {
         event.preventDefault();
         if (cwd && !conversationLoading) {
           setTerminalWorkspace(cwd);
@@ -94,7 +99,7 @@ export function AppShell() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [cwd, terminalWorkspace, conversationLoading]);
+  }, [cwd, terminalWorkspace, conversationLoading, openSettings, settingsOpen]);
 
   function closePanel() {
     setUsageOpen(false);
@@ -119,43 +124,33 @@ export function AppShell() {
     void useAppStore.getState().fetchModels();
   }
 
-  if (!cwd) {
-    return (
-      <TooltipProvider>
-        <div className="h-full w-full bg-background text-foreground">
-          <Welcome onOpenSettings={() => setSettingsOpen(true)} />
-          <Toasts />
-          <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
-        </div>
-      </TooltipProvider>
-    );
-  }
-
   return (
     <TooltipProvider>
-      <div className="flex h-full w-full flex-col bg-background text-foreground">
-        <div className="relative flex min-h-0 flex-1">
+      {settingsOpen && <SettingsPage onClose={() => setSettingsOpen(false)} />}
+      <div className={settingsOpen ? "hidden" : "flex h-full w-full flex-col bg-background text-foreground"}>
+        {!cwd && <Welcome onOpenSettings={openSettings} />}
+        {cwd && <div className="relative flex min-h-0 flex-1">
           {!modelsOpen && <Sidebar />}
           <main className="relative flex min-w-0 flex-1 flex-col">
             {!modelsOpen && !conversationLoading && (
               <TopBar
                 onOpenModels={openModels}
-                onOpenSettings={() => setSettingsOpen(true)}
+                onOpenSettings={openSettings}
                 onTogglePanel={() => panelOpen ? closePanel() : setPanelOpen(true)}
                 panelOpen={panelOpen}
               />
             )}
-            {modelsOpen && <div className={loginProvider ? "hidden" : "flex min-h-0 flex-1 flex-col"}><ModelPicker active={!loginProvider} onClose={() => setModelsOpen(false)} onLoginRequest={setLoginProvider} /></div>}
+            {modelsOpen && <div className={loginProvider ? "hidden" : "flex min-h-0 flex-1 flex-col"}><ModelPicker active={!settingsOpen && !loginProvider} onClose={() => setModelsOpen(false)} onLoginRequest={setLoginProvider} /></div>}
             {modelsOpen && loginProvider && <ProviderLogin key={`${cwd}:${loginProvider}`} provider={loginProvider} options={{ cwd, binary: preferences.binary.trim() || "omp", extraArgs: splitExtraArgs(preferences.extraArgs) }} onBack={() => setLoginProvider(undefined)} onSuccess={completeLogin} />}
             {!modelsOpen && conversationLoading && !selection && <div role="status" className="flex min-h-0 flex-1 items-center justify-center gap-2 text-sm text-muted-foreground"><LoaderCircle aria-hidden="true" className="size-4 animate-spin motion-reduce:animate-none" />{branching ? "Loading conversation branch…" : "Loading conversation…"}</div>}
             {!modelsOpen && selection && <InspectorDetail selection={selection} data={inspector} onSelect={inspect} onClose={() => setInspection(undefined)} />}
             <div className={modelsOpen || selection || conversationLoading ? "hidden" : "@container flex min-h-0 flex-1 flex-col overflow-hidden"}>
               <ChatView key={`chat-${activeRuntimeId}`} />
-              <Composer key={`composer-${activeRuntimeId}`} active={!modelsOpen && !settingsOpen && !selection && !conversationLoading} onOpenModels={openModels} onOpenSettings={() => setSettingsOpen(true)} onOpenUsage={openUsage} />
+              <Composer key={`composer-${activeRuntimeId}`} active={!modelsOpen && !settingsOpen && !selection && !conversationLoading} onOpenModels={openModels} onOpenSettings={openSettings} onOpenUsage={openUsage} />
             </div>
             {terminalWorkspace === cwd && (
-              <Suspense fallback={terminalVisible && !conversationLoading ? <div role="status" className="flex items-center gap-2 border-t p-3 text-xs text-muted-foreground"><LoaderCircle aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />Loading terminal…</div> : null}>
-                <TerminalPanel key={cwd} cwd={cwd} open={terminalVisible && !modelsOpen && !conversationLoading} onHide={() => setTerminalOpen(false)} />
+              <Suspense fallback={terminalVisible && !settingsOpen && !conversationLoading ? <div role="status" className="flex items-center gap-2 border-t p-3 text-xs text-muted-foreground"><LoaderCircle aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />Loading terminal…</div> : null}>
+                <TerminalPanel key={cwd} cwd={cwd} open={terminalVisible && !settingsOpen && !modelsOpen && !conversationLoading} onHide={() => setTerminalOpen(false)} />
               </Suspense>
             )}
           </main>
@@ -163,11 +158,10 @@ export function AppShell() {
             <RightPanel data={inspector} onInspect={inspect} onClose={closePanel}
               planUsage={inspectorCwd && <PlanUsagePopover usage={usage} provider={inspector.session?.model?.provider} open={usageOpen} onOpenChange={setUsageOpen} />} />
           )}
-        </div>
-        <StatusBar terminalOpen={terminalVisible} onToggleTerminal={toggleTerminal} />
-        <Toasts />
-        <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+        </div>}
+        {cwd && <StatusBar terminalOpen={terminalVisible} onToggleTerminal={toggleTerminal} />}
       </div>
+      <Toasts />
     </TooltipProvider>
   );
 }

@@ -7,6 +7,7 @@
 
 ### Changed
 - Rewrote README with a shorter project description, notes on currently supported slash commands, and the existing limitations
+- Updated repository guidance for per-session runtimes, watcher defaults, existing tests, native settings, diagnostics, and output security.
 
 ### Fixed
 - Restored ask tool prompts from current omp runtimes by handling HTML form requests, including defaults, validation, typed answers and free-text alternatives. Legacy ask dialogs remain supported.

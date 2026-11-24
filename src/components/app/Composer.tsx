@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
-import { ArrowUp, ImagePlus, LoaderCircle, Square, X } from "lucide-react";
+import { ArrowUp, FilePlus, ImagePlus, LoaderCircle, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverDescription, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
 import { PromptTextarea } from "./PromptText";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/omp/store";
@@ -34,6 +36,9 @@ export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, active }: 
   const setImages = useAppStore((state) => state.setDraftImages);
   const submitting = useAppStore((state) => state.submitting);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
+  const [filePathOpen, setFilePathOpen] = useState(false);
+  const [filePath, setFilePath] = useState("");
+  const filePathRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const suggestionsRef = useRef<HTMLDivElement | null>(null);
   const lastEditorToken = useRef(0);
@@ -142,6 +147,24 @@ export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, active }: 
     }
     setDraft(`/${command.name} `);
     textareaRef.current?.focus();
+  }
+
+  function insertFilePath() {
+    const textarea = textareaRef.current;
+    const path = filePath.trim();
+    if (!textarea || !path || branching) return;
+
+    let fenceLength = 1;
+    for (const [run] of path.matchAll(/`+/g)) fenceLength = Math.max(fenceLength, run.length + 1);
+    const fence = "`".repeat(fenceLength);
+    const padding = path.startsWith("`") || path.endsWith("`") ? " " : "";
+    const { value, selectionStart, selectionEnd } = textarea;
+    const before = selectionStart > 0 && /\S/.test(value[selectionStart - 1]) ? " " : "";
+    const after = selectionEnd < value.length && /\S/.test(value[selectionEnd]) ? " " : "";
+    textarea.setRangeText(`${before}${fence}${padding}${path}${padding}${fence}${after}`, selectionStart, selectionEnd, "end");
+    setDraft(textarea.value);
+    setFilePathOpen(false);
+    textarea.focus({ preventScroll: true });
   }
 
   function onPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
@@ -315,6 +338,28 @@ export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, active }: 
                 {status === "starting" ? "Starting omp… You can write while it loads." : busy ? "agent is working" : draft.startsWith("/") ? "slash command" : "Enter to send · Shift+Enter newline"}
               </span>
               <div className="ml-auto flex items-center gap-1.5">
+                <Popover open={filePathOpen} onOpenChange={(open) => {
+                  setFilePathOpen(open);
+                  if (open) setFilePath("");
+                }}>
+                  <PopoverTrigger
+                    render={<Button type="button" variant="ghost" size="icon-sm" />}
+                    disabled={branching}
+                    aria-label="Insert file path"
+                    title="Insert file path"
+                    className="text-muted-foreground"
+                  >
+                    <FilePlus className="size-3.5" aria-hidden="true" />
+                  </PopoverTrigger>
+                  <PopoverContent side="top" align="end" initialFocus={filePathRef} className="w-80 max-w-[calc(100vw-24px)]">
+                    <PopoverTitle className="text-xs">Insert file path</PopoverTitle>
+                    <PopoverDescription className="text-xs">Enter an absolute path or a path relative to this workspace.</PopoverDescription>
+                    <form className="flex gap-1.5" onSubmit={(event) => { event.preventDefault(); insertFilePath(); }}>
+                      <Input ref={filePathRef} aria-label="Local file path" placeholder="src/main.tsx" spellCheck={false} value={filePath} onChange={(event) => setFilePath(event.target.value)} className="min-w-0" />
+                      <Button type="submit" size="sm" disabled={!filePath.trim() || branching}>Insert</Button>
+                    </form>
+                  </PopoverContent>
+                </Popover>
                 {images.length > 0 && (
                   <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
                     <ImagePlus className="size-3" /> {images.length}

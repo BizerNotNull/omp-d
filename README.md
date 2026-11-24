@@ -140,7 +140,7 @@ Protocol v1 is the baseline. The client negotiates v2 after `ready`, letting fra
 - No host-tool or host-URI registration.
 - RPC mode has no approval request, so the UI does not show approve/deny prompts; it inherits the launch policy of the `omp` child.
 - One agent process per window. Session switching aborts an in-flight turn, as the RPC command does.
-- Image attachments are supported through paste; files are not attached through the picker yet.
+- Use **Insert file path** in the composer to add an absolute or workspace-relative path at the cursor. It inserts prompt text without reading or attaching the file. Paste images to attach them.
 - The transcript is loaded in one `get_messages` response; extremely long sessions can take a moment to hydrate.
 - Tree navigation requires an omp version with `get_entries` and `navigate_tree`. Branch metadata loads separately and does not disable typing, sending or stopping the agent. As in omp's tree UI, selecting a branch that ended on an unanswered user message restores that prompt to the composer.
 

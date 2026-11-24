@@ -81,3 +81,9 @@ Frontend regression tests use `bun:test` in `tests/*.test.ts`, covering branches
 Rust has inline `#[cfg(test)]`/`#[test]` modules, including frame decoding, session discovery/search, settings, Git queries, and terminal behavior. Extend nearby tests when changing those contracts.
 
 Run `bun run build` for frontend changes and `cargo test --manifest-path src-tauri/Cargo.toml` for native changes. For behavioral changes, also exercise the desktop app against a real local `omp`: verify the affected path, including streaming, abort/queues, session isolation, dialogs, model listing, settings restart, terminal cleanup, or crash recovery as applicable. Session switching must not interrupt a different runtime. Typechecking and bundling alone do not validate IPC or UI behavior.
+
+## Changelog
+
+Each commit on the `main` branch corresponds to a change in the [CHANGELOG.md](./CHANGELOG.md).
+
+Release versions are used to separate commits chronologically.

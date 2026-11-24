@@ -23,10 +23,6 @@ export function ChatView() {
     lastScrollTop.current = element.scrollTop;
   }
 
-  useLayoutEffect(() => {
-    if (stick.current) scrollToBottom();
-  }, [messages, pending, promptEcho]);
-
   useEffect(() => {
     if (status === "ready" && stick.current) scrollToBottom();
   }, [status]);
@@ -42,8 +38,8 @@ export function ChatView() {
     const content = contentRef.current;
     if (!element || !content) return;
 
-    // Tool updates, loaded images, and viewport changes can resize the chat
-    // without changing the message arrays.
+    // React commits, tool output, images, and viewport resizing all share
+    // the same follow path. Only a size change can move the scroll end.
     const observer = new ResizeObserver(() => {
       if (stick.current) scrollToBottom();
     });

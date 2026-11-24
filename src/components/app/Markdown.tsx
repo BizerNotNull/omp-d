@@ -11,6 +11,11 @@ import { NumericTableChart } from "./NumericTableChart";
 
 type MarkdownNode = { type: string; value?: string; tagName?: string; children?: MarkdownNode[] };
 
+// The synchronous transformer owns a reusable syntax grammar registry.
+const highlight = rehypeHighlight();
+const rehypePlugins = [() => highlight];
+const remarkPlugins = [remarkGfm, remarkBreaks];
+
 function nodeText(node: MarkdownNode): string {
   return node.value ?? node.children?.map(nodeText).join("") ?? "";
 }
@@ -47,8 +52,8 @@ export const Markdown = memo(function Markdown({ text, className, streaming = fa
   return (
     <div className={cn("chat-markdown", className)}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkBreaks]}
-        rehypePlugins={[rehypeHighlight]}
+        remarkPlugins={remarkPlugins}
+        rehypePlugins={rehypePlugins}
         components={{
           a: Link,
           pre: ({ node, children, ...props }) => {

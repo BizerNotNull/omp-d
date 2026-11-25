@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chat renderer benchmark</title>
+</head>
+<body>
+  <main id="chat" style="display:flex;flex-direction:column;width:960px;height:720px"></main>
+  <script type="module">
+    import { createElement } from "react";
+    import { createRoot } from "react-dom/client";
+    import { ChatView } from "/src/components/app/ChatView.tsx";
+    import { useAppStore as store } from "/src/lib/omp/store.ts";
+    import "/src/index.css";
+
+    const host = document.querySelector("#chat");
+    const root = createRoot(host);
+    let lastFrame = -Infinity;
+    const frame = () => new Promise((resolve) => {
+      function next(now) {
+        // Headless Chromium can deliver successive callbacks with the same frame timestamp.
+        if (now <= lastFrame) requestAnimationFrame(next);
+        else {
+          lastFrame = now;
+          resolve(now);
+        }
+      }
+      requestAnimationFrame(next);
+    });
+    const text = (text) => ({ type: "text", text });
+    const user = (turn) => ({ role: "user", content: `Inspect the output for batch ${turn}.`, timestamp: turn * 4 });
+    const assistant = (turn, content) => ({ role: "assistant", content, timestamp: turn * 4 + 1, model: "fixture" });
+    const tail = (kind, turn) => `End of ${kind} batch ${turn}.`;
+
+    function output(turn, step) {
+      return [
+        `### Batch ${turn}, step ${step}`,
+        `The **worker** keeps the last result and checks its input before launching the next job.`,
+        `1. Normalize the batch key.\n2. Check \`queue.length\` and record the result.`,
+        "```ts\n" + `const batch = { id: ${turn}, step: ${step} };\nfor (const job of jobs) {\n  await run(job, batch);\n}` + "\n```",
+      ].join("\n\n");
+    }
+
+    function makeHistory(turns) {
+      const messages = [];
+      for (let turn = 0; turn < turns; turn++) {
+        const table = turn % 8 === 0 ? "\n\n| Queue | Size |\n| --- | ---: |\n| Ready | 8 |\n| Done | 32 |" : "";
+        const blocks = [text(`${output(turn, 0)}${table}\n\n${tail("history", turn)}`)];
+        messages.push(user(turn), assistant(turn, blocks));
+        if (turn % 8 === 0) {
+          const id = `tool-${turn}`;
+          blocks.push({ type: "toolCall", id, name: "bash", arguments: { command: `bun test batch-${turn}.test.ts` } });
+          messages.push({ role: "toolResult", toolCallId: id, toolName: "bash", content: [text("4 tests passed\n0 tests failed")], isError: false, timestamp: turn * 4 + 2 });
+        }
+      }
+      return messages;
+    }
+
+    function check(condition, message) {
+      if (!condition) throw new Error(message);
+    }
+
+    const viewport = () => host.querySelector(".overflow-y-auto");
+    const atBottom = (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 2;
+    const rendered = (marker) => Array.from(host.querySelectorAll('[aria-label="Assistant response"]'))
+      .at(-1)?.textContent.includes(marker);
+
+    async function mount(turns) {
+      store.setState({
+        messages: makeHistory(turns), pending: [], status: "ready", busy: false,
+        session: { sessionId: `benchmark-${turns}` },
+      });
+      root.render(createElement(ChatView));
+      const deadline = performance.now() + 10_000;
+      do {
+        await frame();
+        check(performance.now() < deadline, `History with ${turns} turns did not mount`);
+      } while (!rendered(tail("history", turns - 1)) || !atBottom(viewport()));
+      await document.fonts.ready;
+      await frame();
+    }
+
+    async function stream(turn, updates) {
+      const response = Array.from({ length: updates / 6 }, (_, step) => output(turn, step + 1)).join("\n\n")
+        + `\n\n${tail("stream", turn)}`;
+      const messages = [...store.getState().messages, user(turn)];
+      store.setState({ messages, busy: true });
+      const frameTimes = [];
+      let previous = await frame();
+      for (let i = 1; i <= updates; i++) {
+        const prefix = response.slice(0, Math.floor(response.length * i / updates));
+        store.setState({ pending: [{ messageId: `stream-${turn}`, message: assistant(turn, [text(prefix)]) }] });
+        for (let j = 0; j < 2; j++) {
+          const now = await frame();
+          frameTimes.push(now - previous);
+          previous = now;
+        }
+      }
+      check(rendered(tail("stream", turn)) && atBottom(viewport()), "Stream did not render through the final chunk or lost following");
+      store.setState({ messages: [...messages, assistant(turn, [text(response)])], pending: [], busy: false });
+      await frame();
+      await frame();
+      check(rendered(tail("stream", turn)) && atBottom(viewport()), "Settled response is missing or lost following");
+      return frameTimes;
+    }
+
+    async function scroll(steps) {
+      const el = viewport();
+      const bottom = el.scrollTop;
+      const frameTimes = [];
+      let previous = await frame();
+      for (let i = 0; i < steps; i++) {
+        el.scrollBy({ top: i < steps / 2 ? -160 : 160, behavior: "instant" });
+        const now = await frame();
+        frameTimes.push(now - previous);
+        previous = now;
+        if (i + 1 === steps / 2) check(el.scrollTop <= bottom - steps / 2 * 150, "History did not scroll away from the latest reply");
+      }
+      check(atBottom(el), "History scroll did not return to the latest reply");
+      await frame();
+      return frameTimes;
+    }
+
+    globalThis.uiBenchmark = {
+      async prepare() {
+        await mount(16);
+        await stream(16, 12);
+        await scroll(16);
+        await mount(160);
+      },
+      async run() {
+        return { stream: await stream(160, 72), scroll: await scroll(48) };
+      },
+    };
+  </script>
+</body>
+</html>

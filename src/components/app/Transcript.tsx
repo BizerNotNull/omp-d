@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Archive, ArrowUpRight, Brain, ChevronDown, ChevronLeft, ChevronRight, Lightbulb, LoaderCircle, Pencil, Scissors, Sparkles, SquareTerminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PromptText, PromptTextarea } from "./PromptText";
@@ -37,6 +37,28 @@ export function Transcript(props: {
   return <SessionTranscript key={sessionId ?? "no-session"} {...props} />;
 }
 
+const emptyToolIndex = {
+  results: new Map<string, ToolResultMessage>(),
+  callIds: new Set<string>(),
+};
+
+function indexTools(messages: AgentMessage[], base = emptyToolIndex) {
+  let { results, callIds } = base;
+  for (const message of messages) {
+    if (isToolResult(message) && results.get(message.toolCallId) !== message) {
+      if (results === base.results) results = new Map(results);
+      results.set(message.toolCallId, message);
+    } else if (isAssistant(message)) {
+      for (const { id } of toolCalls(message.content)) {
+        if (callIds.has(id)) continue;
+        if (callIds === base.callIds) callIds = new Set(callIds);
+        callIds.add(id);
+      }
+    }
+  }
+  return results === base.results && callIds === base.callIds ? base : { results, callIds };
+}
+
 function SessionTranscript({
   messages,
   pending,
@@ -55,29 +77,21 @@ function SessionTranscript({
   const queue = useAppStore((state) => state.queue);
   const controlsDisabled = busy || branching || treeLoading || status !== "ready" || Boolean(pendingAsyncWork)
     || queue.steering.length > 0 || queue.followUp.length > 0;
-  const all = [...messages, ...pending.map((entry) => entry.message)];
+  const historyTools = useMemo(() => indexTools(messages), [messages]);
+  // Text-only stream updates leave the settled tool index and rows unchanged.
+  const { results, callIds } = useMemo(() => indexTools(pending.map(({ message }) => message), historyTools), [pending, historyTools]);
   const waitingForMessage = busy
     && !pending.some((entry) => isAssistant(entry.message))
     && !Object.values(toolRuns).some((run) => run.status === "running");
 
-  const results = new Map<string, ToolResultMessage>();
-  const callIds = new Set<string>();
-  for (const message of all) {
-    if (isToolResult(message)) results.set(message.toolCallId, message);
-    if (isAssistant(message)) {
-      for (const call of toolCalls(message.content)) callIds.add(call.id);
-    }
-  }
-
-  const items = all.map((message, index) => {
-    const branch = index < messages.length ? messageBranches[index] : undefined;
+  const renderMessage = useCallback((message: AgentMessage, index: number, streaming: boolean) => {
+    const branch = streaming ? undefined : messageBranches[index];
     const key = branch?.entryId ?? `${index}:${message.role}:${typeof message.timestamp === "number" ? message.timestamp : ""}`;
     if (message.role === "user" || message.role === "developer") {
       if (!isUserVisible(message)) return null;
       return <UserBubble key={key} message={message} branch={branch} disabled={controlsDisabled} />;
     }
     if (isAssistant(message)) {
-      const streaming = pending.some((entry) => entry.message === message);
       return (
         <AssistantBlock key={key} message={message} results={results} toolRuns={toolRuns} streaming={streaming} />
       );
@@ -91,9 +105,16 @@ function SessionTranscript({
       );
     }
     return <SystemNote key={key} message={message} />;
-  });
+  }, [messageBranches, controlsDisabled, results, callIds, toolRuns]);
+
+  const history = useMemo(() => messages.map((message, index) => renderMessage(message, index, false)), [messages, renderMessage]);
+  // Keep one flat keyed list so settling a reply preserves its component state.
+  const items = history.slice();
   if (promptEcho) {
-    items.splice(messages.length, 0, <UserBubble key={promptEcho.id} message={promptEcho.message} disabled />);
+    items.push(<UserBubble key={promptEcho.id} message={promptEcho.message} disabled />);
+  }
+  for (let index = 0; index < pending.length; index++) {
+    items.push(renderMessage(pending[index].message, messages.length + index, true));
   }
 
   return (

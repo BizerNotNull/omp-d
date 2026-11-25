@@ -4,11 +4,7 @@ import { useAppStore } from "@/lib/omp/store";
 import { Transcript, TranscriptEmpty } from "./Transcript";
 
 export function ChatView() {
-  const messages = useAppStore((state) => state.messages);
-  const pending = useAppStore((state) => state.pending);
-  const promptEcho = useAppStore((state) => state.promptEcho);
   const status = useAppStore((state) => state.status);
-  const busy = useAppStore((state) => state.busy);
   const sessionId = useAppStore((state) => state.session?.sessionId);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -22,10 +18,6 @@ export function ChatView() {
     element.scrollTo({ top: element.scrollHeight, behavior });
     lastScrollTop.current = element.scrollTop;
   }
-
-  useLayoutEffect(() => {
-    if (stick.current) scrollToBottom();
-  }, [messages, pending, promptEcho]);
 
   useEffect(() => {
     if (status === "ready" && stick.current) scrollToBottom();
@@ -42,8 +34,8 @@ export function ChatView() {
     const content = contentRef.current;
     if (!element || !content) return;
 
-    // Tool updates, loaded images, and viewport changes can resize the chat
-    // without changing the message arrays.
+    // React commits, tool output, images, and viewport resizing all share
+    // the same follow path. Only a size change can move the scroll end.
     const observer = new ResizeObserver(() => {
       if (stick.current) scrollToBottom();
     });
@@ -55,21 +47,22 @@ export function ChatView() {
   function onScroll() {
     const element = scrollRef.current;
     if (!element) return;
-    const nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 96;
-    // A growing transcript or an in-progress jump must not disable following.
-    if (element.scrollTop < lastScrollTop.current) stick.current = nearBottom;
-    else if (nearBottom) stick.current = true;
-    lastScrollTop.current = element.scrollTop;
-    setAtBottom(stick.current);
+    const previous = lastScrollTop.current;
+    const top = element.scrollTop;
+    lastScrollTop.current = top;
+    // Downward motion while following cannot turn following off.
+    if (stick.current && top >= previous) return;
+    const following = element.scrollHeight - top - element.clientHeight < 96;
+    if (stick.current === following) return;
+    stick.current = following;
+    setAtBottom(following);
   }
-
-  const empty = messages.length === 0 && pending.length === 0 && !promptEcho && !busy;
 
   return (
     <div className="relative min-h-0 flex-1">
       <div ref={scrollRef} onScroll={onScroll} className="scroll-thin h-full overflow-y-auto [scrollbar-gutter:stable_both-edges]">
         <div ref={contentRef} className="conversation-lane pt-3 pb-2">
-          {empty ? <TranscriptEmpty /> : <Transcript messages={messages} pending={pending} />}
+          <ChatTranscript />
         </div>
       </div>
 
@@ -88,4 +81,11 @@ export function ChatView() {
       )}
     </div>
   );
+}
+
+function ChatTranscript() {
+  const messages = useAppStore((state) => state.messages);
+  const pending = useAppStore((state) => state.pending);
+  const empty = useAppStore((state) => !state.promptEcho && !state.busy) && messages.length === 0 && pending.length === 0;
+  return empty ? <TranscriptEmpty /> : <Transcript messages={messages} pending={pending} />;
 }

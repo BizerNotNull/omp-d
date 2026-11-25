@@ -10,5 +10,6 @@
 
 ### Changed
 - Session, project, Worktree, model, and settings search fields use the same compact style with a thinner border
+- Text fields, including Extra arguments, keep a thin border when focused
 - Agent request submit buttons use the same compact arrow-button style as the composer
 - Slash completion includes aliases and subcommands advertised by omp. Known TUI-only commands without a desktop handler stay in the composer instead of being sent to the model

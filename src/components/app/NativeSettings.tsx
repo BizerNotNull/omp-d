@@ -35,7 +35,7 @@ interface CatalogState {
 }
 
 const booleanChoices = ["true", "false"];
-const textareaClass = "scroll-thin w-full min-w-0 resize-y rounded-md border border-input bg-background px-2.5 py-2 font-mono text-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-50";
+const textareaClass = "scroll-thin w-full min-w-0 resize-y rounded-md border border-input bg-background px-2.5 py-2 font-mono text-xs outline-none focus-visible:border-ring focus-visible:outline-hidden disabled:opacity-50";
 
 export function NativeSettings({ active }: { active: boolean }) {
   const cwd = useAppStore((state) => state.cwd);

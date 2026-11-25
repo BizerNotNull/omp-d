@@ -129,9 +129,9 @@ export function Sidebar({ searchRef }: { searchRef: Ref<HTMLInputElement> }) {
           <Button variant="ghost" className="h-7 gap-1.5 px-2 text-[11px]" disabled={!cwd || conversationPending} onClick={() => void newSession()}><MessageSquarePlus aria-hidden="true" className="size-3.5" />New Session</Button>
         </div>
         <div className="relative">
-          <Search aria-hidden="true" className="pointer-events-none absolute top-2.5 left-2 size-3.5 text-muted-foreground" />
-          <Input ref={searchRef} aria-label="Search project sessions" placeholder="Search project sessions…" value={query} onChange={(event) => setQuery(event.target.value)} className="h-8 pr-7 pl-7 text-[11px]" />
-          {query && <button type="button" aria-label="Clear session search" className="absolute top-2 right-2 text-muted-foreground" onClick={() => setQuery("")}><X className="size-4" /></button>}
+          <Search aria-hidden="true" className="pointer-events-none absolute top-1/2 left-2.75 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input ref={searchRef} aria-label="Search project sessions" placeholder="Search project sessions…" value={query} onChange={(event) => setQuery(event.target.value)} className="h-auto border-sidebar-border py-2 pr-8 pl-8 text-[11px] focus-visible:border-sidebar-border focus-visible:ring-2 focus-visible:ring-ring md:text-[11px] dark:bg-transparent" />
+          {query && <button type="button" aria-label="Clear session search" className="absolute top-1/2 right-2.75 -translate-y-1/2 text-muted-foreground" onClick={() => setQuery("")}><X className="size-3.5" /></button>}
         </div>
         <div>
           <div aria-label="Session views" className="flex rounded-lg border border-sidebar-border p-0.5">

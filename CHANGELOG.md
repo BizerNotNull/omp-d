@@ -9,5 +9,6 @@
 - Drop files onto the composer to reference their original paths. PNG, JPEG, GIF, and WebP files become image attachments when readable within the per-drop limit; otherwise their paths are inserted. Image-only drafts can be sent
 
 ### Changed
+- The sidebar session search matches the Worktree menu button’s size, typography, and border
 - Agent request submit buttons use the same compact arrow-button style as the composer
 - Slash completion includes aliases and subcommands advertised by omp. Known TUI-only commands without a desktop handler stay in the composer instead of being sent to the model

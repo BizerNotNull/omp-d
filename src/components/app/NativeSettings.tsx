@@ -1,9 +1,10 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { invoke } from "@/lib/diagnostics";
-import { LoaderCircle, RotateCcw, Save, Search } from "lucide-react";
+import { LoaderCircle, RotateCcw, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchInput } from "@/components/ui/search-input";
 import { useAppStore } from "@/lib/omp/store";
 import { invalidateCatalog, splitExtraArgs } from "@/lib/omp/model-catalog";
 import type { StartOptions } from "@/lib/omp/types";
@@ -19,7 +20,6 @@ import {
   type NativeSettingWriteResult,
 } from "@/lib/omp/native-settings";
 import { cn } from "@/lib/utils";
-import { pickerSearchClass, pickerSearchIconClass } from "./picker-styles";
 import { SettingsSelect, SettingsSelectOption } from "./SettingsSelect";
 
 interface RowFeedback {
@@ -219,10 +219,7 @@ export function NativeSettings({ active }: { active: boolean }) {
           <Button type="button" variant="outline" size="sm" onClick={() => setReload((value) => value + 1)}>Retry</Button>
         </div>
       ) : visibleCatalog && <>
-        <div className="relative">
-          <Search aria-hidden="true" className={pickerSearchIconClass} />
-          <Input aria-label="Search native setting keys and descriptions" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search keys and descriptions…" className={pickerSearchClass} />
-        </div>
+        <SearchInput aria-label="Search native setting keys and descriptions" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search keys and descriptions…" />
         <div className="flex flex-wrap gap-1" role="group" aria-label="Native setting categories">
           {[undefined, ...groups].map((name) => <button key={name ?? "all"} type="button" aria-pressed={selectedGroup === name} onClick={() => setGroup(name)} className={cn("rounded-md border px-2 py-1 text-[11px] transition-colors", selectedGroup === name ? "border-primary/30 bg-muted text-foreground" : "border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground")}>
             {name ?? "All"} ({name ? matching.filter(([, entry]) => entry.group === name).length : matching.length})

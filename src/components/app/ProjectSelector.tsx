@@ -1,12 +1,12 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, FolderOpen, FolderPlus, LoaderCircle, Search } from "lucide-react";
+import { Check, ChevronDown, FolderOpen, FolderPlus, LoaderCircle } from "lucide-react";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
-import { Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/search-input";
 import { useAppStore } from "@/lib/omp/store";
 import { sessionPathKey, useSessionNavigation } from "@/lib/omp/navigation";
 import { cn } from "@/lib/utils";
 import { worktreeName } from "./WorktreeSelector";
-import { pickerDetailClass, pickerRowClass, pickerSearchClass, pickerSearchIconClass } from "./picker-styles";
+import { pickerDetailClass, pickerRowClass } from "./picker-styles";
 
 export function ProjectSelector() {
   const cwd = useAppStore((state) => state.cwd);
@@ -49,15 +49,12 @@ export function ProjectSelector() {
     </PopoverTrigger>
     <PopoverContent align="start" className="w-80 max-w-[calc(100vw-24px)] gap-2">
       <PopoverTitle className="px-1 text-xs">Switch project</PopoverTitle>
-      <div className="relative">
-        <Search aria-hidden="true" className={pickerSearchIconClass} />
-        <Input autoFocus role="combobox" aria-label="Search projects" aria-expanded="true" aria-controls={`${id}-projects`} aria-autocomplete="list" aria-activedescendant={projects[index] ? `${id}-${index}` : undefined} placeholder="Find a project by name or path…" value={query} onChange={(event) => setQuery(event.target.value)} className={pickerSearchClass} onKeyDown={(event) => {
-          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-            event.preventDefault();
-            setIndex((value) => Math.max(0, Math.min(projects.length - 1, value + (event.key === "ArrowDown" ? 1 : -1))));
-          } else if (event.key === "Enter" && projects[index]) { event.preventDefault(); choose(projects[index]); }
-        }} />
-      </div>
+      <SearchInput autoFocus role="combobox" aria-label="Search projects" aria-expanded="true" aria-controls={`${id}-projects`} aria-autocomplete="list" aria-activedescendant={projects[index] ? `${id}-${index}` : undefined} placeholder="Find a project by name or path…" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault();
+          setIndex((value) => Math.max(0, Math.min(projects.length - 1, value + (event.key === "ArrowDown" ? 1 : -1))));
+        } else if (event.key === "Enter" && projects[index]) { event.preventDefault(); choose(projects[index]); }
+      }} />
       <div className="px-1 pt-1 text-[10px] text-muted-foreground">Recent projects</div>
       <div ref={listRef} id={`${id}-projects`} role="listbox" aria-label="Projects" className="max-h-72 overflow-y-auto overscroll-contain">
         {projects.map((path, optionIndex) => <button type="button" role="option" key={sessionPathKey(path)} id={`${id}-${optionIndex}`} data-project-index={optionIndex} aria-selected={sessionPathKey(path) === sessionPathKey(current)} title={path} onMouseMove={() => setIndex(optionIndex)} onClick={() => choose(path)} className={cn(pickerRowClass, "py-2.5", index === optionIndex && "bg-muted")}>

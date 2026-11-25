@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Ref } from "react";
-import { GitBranch, LoaderCircle, MessageSquarePlus, Pin, Search, X } from "lucide-react";
+import { GitBranch, LoaderCircle, MessageSquarePlus, Pin } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/search-input";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/omp/store";
 import { sessionPathKey, useSessionNavigation } from "@/lib/omp/navigation";
@@ -128,11 +128,7 @@ export function Sidebar({ searchRef }: { searchRef: Ref<HTMLInputElement> }) {
           <h2 className="px-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Sessions</h2>
           <Button variant="ghost" className="h-7 gap-1.5 px-2 text-[11px]" disabled={!cwd || conversationPending} onClick={() => void newSession()}><MessageSquarePlus aria-hidden="true" className="size-3.5" />New Session</Button>
         </div>
-        <div className="relative">
-          <Search aria-hidden="true" className="pointer-events-none absolute top-1/2 left-2.75 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input ref={searchRef} aria-label="Search project sessions" placeholder="Search project sessions…" value={query} onChange={(event) => setQuery(event.target.value)} className="h-auto border-sidebar-border py-2 pr-8 pl-8 text-[11px] focus-visible:border-sidebar-border focus-visible:ring-2 focus-visible:ring-ring md:text-[11px] dark:bg-transparent" />
-          {query && <button type="button" aria-label="Clear session search" className="absolute top-1/2 right-2.75 -translate-y-1/2 text-muted-foreground" onClick={() => setQuery("")}><X className="size-3.5" /></button>}
-        </div>
+        <SearchInput ref={searchRef} aria-label="Search project sessions" placeholder="Search project sessions…" value={query} onChange={(event) => setQuery(event.target.value)} clear={query ? { label: "Clear session search", onClick: () => setQuery("") } : undefined} />
         <div>
           <div aria-label="Session views" className="flex rounded-lg border border-sidebar-border p-0.5">
             {(["recent", "running", "pinned"] as const).map((candidate) => <button type="button" key={candidate} aria-pressed={candidate === view} onClick={() => setView(candidate)} className={cn("min-w-0 flex-1 rounded-md px-1 py-1.5 text-[11px] capitalize focus-visible:ring-2 focus-visible:ring-ring", candidate === view ? "bg-sidebar-accent font-medium" : "text-muted-foreground hover:text-foreground")}>{candidate}</button>)}

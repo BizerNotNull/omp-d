@@ -1,13 +1,13 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, FolderOpen, GitBranch, LoaderCircle, Pin, Search } from "lucide-react";
+import { Check, ChevronDown, FolderOpen, GitBranch, LoaderCircle, Pin } from "lucide-react";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/search-input";
 import { Button } from "@/components/ui/button";
 import { sessionPathKey, useSessionNavigation } from "@/lib/omp/navigation";
 import { useAppStore } from "@/lib/omp/store";
 import { cn } from "@/lib/utils";
-import { pickerRowClass, pickerSearchClass, pickerSearchIconClass } from "./picker-styles";
+import { pickerRowClass } from "./picker-styles";
 
 export function worktreeName(cwd: string, branch?: string | null): string {
   return branch || cwd.replace(/\\/g, "/").split("/").filter(Boolean).pop() || cwd;
@@ -75,15 +75,12 @@ export function WorktreeSelector({ value, onSelect, allowAll = true, className }
       </PopoverTrigger>
       <PopoverContent align="start" className="w-72 max-w-[calc(100vw-24px)] gap-2">
         <PopoverTitle className="px-1 text-xs">{allowAll ? "Filter Worktrees" : "Task Worktree"}</PopoverTitle>
-        <div className="relative">
-          <Search aria-hidden="true" className={pickerSearchIconClass} />
-          <Input autoFocus role="combobox" aria-label="Search Worktrees" aria-expanded="true" aria-controls={`${id}-list`} aria-autocomplete="list" aria-activedescendant={options[index] ? `${id}-${index}` : undefined} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search Worktrees…" className={pickerSearchClass} onKeyDown={(event) => {
-            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-              event.preventDefault();
-              setIndex((current) => Math.max(0, Math.min(options.length - 1, current + (event.key === "ArrowDown" ? 1 : -1))));
-            } else if (event.key === "Enter" && options[index]) { event.preventDefault(); choose(options[index].cwd); }
-          }} />
-        </div>
+        <SearchInput autoFocus role="combobox" aria-label="Search Worktrees" aria-expanded="true" aria-controls={`${id}-list`} aria-autocomplete="list" aria-activedescendant={options[index] ? `${id}-${index}` : undefined} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search Worktrees…" onKeyDown={(event) => {
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            setIndex((current) => Math.max(0, Math.min(options.length - 1, current + (event.key === "ArrowDown" ? 1 : -1))));
+          } else if (event.key === "Enter" && options[index]) { event.preventDefault(); choose(options[index].cwd); }
+        }} />
         <div ref={listRef} id={`${id}-list`} role="listbox" aria-label="Worktrees" className="max-h-64 overflow-y-auto overscroll-contain">
           {options.map((item, optionIndex) => <div key={item.cwd}>
             {item.group && item.group !== options[optionIndex - 1]?.group && <div className="px-2 pt-3 pb-1 text-[10px] text-muted-foreground">{item.group}</div>}

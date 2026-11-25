@@ -1,7 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowUpRight, Check, Layers3, LoaderCircle, RefreshCw, Search, X } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Check, Layers3, LoaderCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/search-input";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/omp/store";
 import { formatTokens, modelLabel } from "@/lib/omp/format";
@@ -10,7 +10,7 @@ import { splitExtraArgs } from "@/lib/omp/model-catalog";
 import { ModelRolesPanel } from "./ModelRolesPanel";
 import { ModelPolicyPanel } from "./ModelPolicyPanel";
 import { useModelSettings } from "./useModelSettings";
-import { pickerDetailClass, pickerRowClass, pickerSearchClass, pickerSearchIconClass } from "./picker-styles";
+import { pickerDetailClass, pickerRowClass } from "./picker-styles";
 
 const ROW_HEIGHT = 48;
 const OVERSCAN = 5;
@@ -234,21 +234,17 @@ export function ModelPicker({ onClose, onLoginRequest, active = true }: { onClos
         </aside>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-1.5 px-3 pt-2 md:grid-cols-[minmax(0,24rem)_7rem_auto] md:justify-start">
-            <div className="relative col-span-full min-w-0 md:col-span-1">
-              <Search aria-hidden="true" className={pickerSearchIconClass} />
-              <Input ref={searchRef} aria-label="Search models" aria-controls={listId} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
-                if (event.nativeEvent.isComposing || switchingDisabled) return;
-                if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-                  event.preventDefault();
-                  navigate(event.key === "ArrowDown" ? 1 : -1);
-                } else if (event.key === "Enter") {
-                  event.preventDefault();
-                  const model = highlightedIndex >= 0 ? filtered[highlightedIndex] : filtered.find((item) => item.available !== false);
-                  if (model) void choose(model);
-                }
-              }} placeholder="Search name, ID, or provider…" className={cn(pickerSearchClass, "focus-visible:ring-1 focus-visible:ring-ring", query && "pr-8")} />
-              {query && <Button variant="ghost" size="icon" className="absolute top-0 right-0" aria-label="Clear model search" onClick={() => { setQuery(""); searchRef.current?.focus(); }}><X aria-hidden="true" className="size-3.5" /></Button>}
-            </div>
+            <SearchInput className="col-span-full md:col-span-1" ref={searchRef} aria-label="Search models" aria-controls={listId} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing || switchingDisabled) return;
+              if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                event.preventDefault();
+                navigate(event.key === "ArrowDown" ? 1 : -1);
+              } else if (event.key === "Enter") {
+                event.preventDefault();
+                const model = highlightedIndex >= 0 ? filtered[highlightedIndex] : filtered.find((item) => item.available !== false);
+                if (model) void choose(model);
+              }
+            }} placeholder="Search name, ID, or provider…" clear={query ? { label: "Clear model search", onClick: () => { setQuery(""); searchRef.current?.focus(); } } : undefined} />
             <select aria-label="Filter by provider" className={cn(catalogSelectClass, "md:hidden")} value={provider} onChange={(event) => selectProvider(event.target.value)}>
               <option value="">All available</option>
               {!!catalog.readyProviders.length && <optgroup label="Available providers">

@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { useAppStore, type DialogRequest } from "@/lib/omp/store";
 import { HtmlFormDialog } from "./HtmlFormDialog";
+import { SendButton } from "./SendButton";
 export function AgentRequestCard() {
   const dialogs = useAppStore((state) => state.dialogs);
   const dialog = dialogs[0];
@@ -76,10 +77,10 @@ function DialogBody({
   if (dialog.method === "confirm") {
     return (
       <RequestFooter>
-        <Button variant="outline" onClick={onCancel}>
+        <Button variant="outline" size="sm" onClick={onCancel}>
           Cancel
         </Button>
-        <Button onClick={() => onSubmit({ confirmed: true })}>Confirm</Button>
+        <SendButton onClick={() => onSubmit({ confirmed: true })}>Confirm</SendButton>
       </RequestFooter>
     );
   }
@@ -103,7 +104,7 @@ function DialogBody({
           ))}
         </div>
         <RequestFooter>
-          <Button variant="outline" onClick={onCancel}>
+          <Button variant="outline" size="sm" onClick={onCancel}>
             Cancel
           </Button>
         </RequestFooter>
@@ -128,10 +129,10 @@ function DialogBody({
           autoFocus
         />
         <RequestFooter>
-          <Button variant="outline" onClick={onCancel}>
+          <Button variant="outline" size="sm" onClick={onCancel}>
             Cancel
           </Button>
-          <Button onClick={() => onSubmit({ value })}>{dialog.secret ? "Submit" : "OK"}</Button>
+          <SendButton onClick={() => onSubmit({ value })}>{dialog.secret ? "Submit" : "OK"}</SendButton>
         </RequestFooter>
       </div>
     );
@@ -147,10 +148,10 @@ function DialogBody({
         autoFocus
       />
       <RequestFooter>
-        <Button variant="outline" onClick={onCancel}>
+        <Button variant="outline" size="sm" onClick={onCancel}>
           Cancel
         </Button>
-        <Button onClick={() => onSubmit({ value })}>Submit</Button>
+        <SendButton onClick={() => onSubmit({ value })}>Submit</SendButton>
       </RequestFooter>
     </div>
   );
@@ -294,10 +295,10 @@ function AskDialog({
         </div>
 
         <RequestFooter>
-          <Button variant="outline" onClick={() => void onCancel(dialog.id)}>
+          <Button variant="outline" size="sm" onClick={() => void onCancel(dialog.id)}>
             Cancel
           </Button>
-          <Button onClick={submit}>Send answers</Button>
+          <SendButton onClick={submit}>Send answers</SendButton>
         </RequestFooter>
     </div>
   );

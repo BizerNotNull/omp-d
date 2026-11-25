@@ -35,7 +35,9 @@ export function ComposerStatus({ active }: { active: boolean }) {
   const goal = session?.goal?.goal;
   const clean = git && !git.staged && !git.unstaged && !git.untracked && !git.conflicted;
   const markEntries = Object.entries(statusMarks)
-    .map(([key, value]) => [key, stripPrivateUse(stripAnsi(value))] as const)
+    .map(([key, value]) => [key, key === "ompd:plan"
+      ? (value === "paused" ? "Plan paused" : "Plan mode")
+      : stripPrivateUse(stripAnsi(value))] as const)
     .filter(([, value]) => value.trim());
 
   return (

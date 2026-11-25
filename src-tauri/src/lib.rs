@@ -2,6 +2,7 @@ mod agent;
 mod auth;
 mod catalog;
 mod diagnostics;
+mod file_drop;
 mod git_status;
 mod rpc_frame;
 mod sessions;
@@ -141,6 +142,12 @@ pub fn run() {
         .manage(AgentState::default())
         .manage(auth::AuthState::default())
         .manage(terminal::TerminalState::default())
+        .manage(file_drop::DroppedFiles::default())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+                window.state::<file_drop::DroppedFiles>().remember(paths);
+            }
+        })
         .setup(|app| {
             let home = app.path().home_dir()?;
             app.manage(diagnostics::init(&home)?);
@@ -165,6 +172,7 @@ pub fn run() {
                 git_status,
                 get_git_changes,
                 get_git_diff,
+                file_drop::read_dropped_images,
                 terminal::terminal_create,
                 terminal::terminal_write,
                 terminal::terminal_resize,

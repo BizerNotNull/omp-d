@@ -33,11 +33,18 @@ import type {
   UserMessage,
 } from "./types";
 import { firstLine, imageBlocks, modelLabel, stripPrivateUse } from "./format";
+import { formatPathReferences } from "./file-reference";
 
 const LAST_CWD_KEY = "ompd:lastCwd";
 const LAST_SESSION_KEY = "ompd:lastSession";
 const LAST_PROJECT_KEY = "ompd:lastProject";
 const PREFS_KEY = "ompd:prefs";
+const TUI_ONLY_COMMANDS = [
+  "agents", "branch", "cleanse", "clear", "collab", "copy", "delete", "exit", "extensions", "fork", "git",
+  "hotkeys", "hub", "join", "leave", "live", "local", "login", "logout", "loop", "omfg",
+  "open", "pause", "plan", "plan-review", "providers", "q", "queue", "quit", "record", "rewind", "setup",
+  "status", "subagents", "tan", "tree", "vibe",
+];
 
 export interface Preferences {
   binary: string;
@@ -111,6 +118,7 @@ export type ConnectionStatus = "idle" | "starting" | "ready" | "error" | "stoppe
 
 export interface OpenSession {
   id: number;
+  sessionId?: string;
   path?: string;
   cwd?: string;
   title: string;
@@ -129,6 +137,8 @@ interface AppState {
   draftText: string;
   draftImages: ImageContent[];
   submitting: boolean;
+  droppedImagesPending: number;
+  readDroppedImages: (paths: string[]) => Promise<void>;
   setDraftText: (text: string) => void;
   setDraftImages: (images: ImageContent[] | ((current: ImageContent[]) => ImageContent[])) => void;
   status: ConnectionStatus;
@@ -256,6 +266,7 @@ let promptSequence = 0;
 let treeRequest = 0;
 let treeWarningGeneration: number | undefined;
 let workspaceQuerySeq = 0;
+let planReviewSequence = 0;
 let subagentSubscriptionGeneration: number | undefined;
 let subagentRefresh: Promise<void> | undefined;
 let subagentEventRevision = 0;
@@ -311,6 +322,25 @@ const runtime = create<AppState>()((set, get) => ({
   draftText: "",
   draftImages: [],
   submitting: false,
+  droppedImagesPending: 0,
+  readDroppedImages: async (paths) => {
+    set((state) => ({ droppedImagesPending: state.droppedImagesPending + 1 }));
+    const results = await invoke<(Omit<ImageContent, "type"> | null)[]>("read_dropped_images", { paths })
+      .catch(() => undefined);
+    const images: ImageContent[] = [];
+    const missing: string[] = [];
+    for (const [index, path] of paths.entries()) {
+      const image = results?.[index];
+      if (image) images.push({ type: "image", ...image });
+      else missing.push(path);
+    }
+    const references = formatPathReferences(missing);
+    set((state) => ({
+      droppedImagesPending: state.droppedImagesPending - 1,
+      ...(images.length && { draftImages: [...state.draftImages, ...images] }),
+      ...(references && { draftText: `${state.draftText}${/\S$/.test(state.draftText) ? " " : ""}${references}` }),
+    }));
+  },
   setDraftText: (draftText) => set({ draftText }),
   setDraftImages: (images) => set((state) => ({ draftImages: typeof images === "function" ? images(state.draftImages) : images })),
   status: "idle",
@@ -794,10 +824,33 @@ const runtime = create<AppState>()((set, get) => ({
   },
 
   prompt: async (behavior) => {
-    const { status, hydrating, branching, submitting, draftText, draftImages, busy, session } = get();
-    if (status !== "ready" || hydrating || branching || submitting) return;
+    const { status, hydrating, branching, submitting, droppedImagesPending, draftText, draftImages, busy, session } = get();
+    if (status !== "ready" || hydrating || branching || submitting || droppedImagesPending || get().statusMarks["ompd:plan-applying"]) return;
     const trimmed = draftText.trim();
-    if (!trimmed) return;
+    if (!trimmed && !draftImages.length) return;
+    const commandName = /^\/([^\s:]+)(?:[\s:]|$)/.exec(trimmed)?.[1];
+    if (commandName === "restart") {
+      if (trimmed !== "/restart" || busy || session?.hasPendingAsyncWork || draftImages.length) {
+        pushToast(set, "warning", "Use /restart without arguments or attachments when the session is idle.");
+        return;
+      }
+      set({ draftText: "" });
+      await get().restart();
+      return;
+    }
+    if (commandName && TUI_ONLY_COMMANDS.includes(commandName)
+      && !get().commands.some((command) => command.name === commandName || command.aliases?.includes(commandName))) {
+      pushToast(set, "warning", `/${commandName} is unavailable in this desktop runtime.`);
+      return;
+    }
+    if (commandName === "plan" && session?.goal) {
+      pushToast(set, "warning", "Drop the current goal before entering plan mode.");
+      return;
+    }
+    if (commandName === "goal" && get().statusMarks["ompd:plan"] && !/^\/goal(?:\s+show)?$/.test(trimmed)) {
+      pushToast(set, "warning", "Exit plan mode before changing the goal.");
+      return;
+    }
     if (/^\/btw(?:\s|$)/.test(trimmed)) {
       const question = trimmed.slice(4).trim();
       if (!question) {
@@ -816,14 +869,14 @@ const runtime = create<AppState>()((set, get) => ({
       }
       return;
     }
-    const shouldTitle = !session?.sessionName && (session?.messageCount ?? 0) === 0 && !trimmed.startsWith("/");
+    const shouldTitle = trimmed && !session?.sessionName && (session?.messageCount ?? 0) === 0 && !trimmed.startsWith("/");
     const goalCommand = /^\/(?:goal|guided-goal)(?:\s|$)/.test(trimmed);
     const clearedImages: ImageContent[] = [];
     const promptEcho = !busy && !trimmed.startsWith("/") ? {
       id: `ui-prompt-${++promptSequence}`,
       message: {
         role: "user" as const,
-        content: draftImages.length ? [{ type: "text" as const, text: trimmed }, ...draftImages] : trimmed,
+        content: draftImages.length ? [...(trimmed ? [{ type: "text" as const, text: trimmed }] : []), ...draftImages] : trimmed,
         timestamp: Date.now(),
       },
     } : undefined;
@@ -1207,9 +1260,8 @@ const runtime = create<AppState>()((set, get) => ({
       }
       case "prompt_result": {
         const result = frame as unknown as PromptResultFrame;
-        // Internal workspace queries are local prompts too; they must not
-        // recursively refresh the session or change the user's busy state.
-        if (result.id?.startsWith("ompd-workspace-")) return;
+        // Internal extension commands must not change user prompt state or trigger refreshes.
+        if (result.id?.startsWith("ompd-workspace-") || result.id?.startsWith("ompd-plan-review-")) return;
         if (result.status === "error") {
           pushToast(set, "error", result.error?.message ?? "The prompt failed.");
         } else if (result.status === "aborted") {
@@ -1502,6 +1554,40 @@ function handleExtensionRequest(request: ExtensionUIRequest, set: SetState, get:
       return;
     }
     case "setStatus": {
+      if (request.statusKey === "ompd:plan-review-ready") {
+        const state = get();
+        if (state.status !== "ready" || !state.session || request.statusText !== state.session.sessionId) return;
+        const generation = omp.generation;
+        const revision = conversationRevision;
+        void omp.send({ type: "prompt", id: `ompd-plan-review-${++planReviewSequence}`, message: "/plan-review" }).catch((error) => {
+          if (generation === omp.generation && revision === conversationRevision) {
+            pushToast(set, "warning", `Could not open plan review: ${describeError(error)}`);
+          }
+        });
+        return;
+      }
+      if (request.statusKey === "ompd:plan-session") {
+        const path = request.statusText;
+        if (!path || get().status !== "ready" || !get().statusMarks["ompd:plan-applying"]) return;
+        const entry = runtimes.get(id);
+        if (entry) entry.path = path;
+        ++conversationRevision;
+        subagentRefresh = undefined;
+        subagentMessageRequests.clear();
+        runtimeModifiedTimes.set(id, Date.now());
+        set((state) => ({
+          ...resetBtw(),
+          ...withMessageKeys([]),
+          session: undefined, sessionTree: undefined, stats: undefined, messageBranches: [], treeLoading: false,
+          pending: [], promptEcho: undefined, toolRuns: {}, subagents: {}, subagentMessages: {}, subagentsAvailable: undefined,
+          queue: { steering: [], followUp: [] }, dialogs: [], notices: [], widgets: {},
+          statusMarks: { "ompd:plan-applying": state.statusMarks["ompd:plan-applying"] },
+        }));
+        setTitle("omp-d — Oh My Pi");
+        void get().refreshAll();
+        void get().loadSessions();
+        return;
+      }
       if (request.statusKey === "ompd:workspace") {
         const cwd = request.statusText;
         if (!cwd || cwd === get().cwd) return;
@@ -1518,6 +1604,7 @@ function handleExtensionRequest(request: ExtensionUIRequest, set: SetState, get:
         void get().refreshGitStatus();
         return;
       }
+      if (get().statusMarks[request.statusKey] === request.statusText) return;
       set((state) => {
         const statusMarks = { ...state.statusMarks };
         if (request.statusText) statusMarks[request.statusKey] = request.statusText;
@@ -1660,7 +1747,8 @@ function hasSessionActivity(state: AppState): boolean {
   return Boolean(state.messages.length || state.pending.length || state.busy
     || state.btwRecords.length || state.session?.messageCount || state.session?.hasPendingAsyncWork
     || state.session?.queuedMessageCount || state.session?.sessionName
-    || state.session?.sessionTitle || state.session?.goal);
+    || state.session?.sessionTitle || state.session?.goal
+    || state.statusMarks["ompd:plan"] === "active" || state.statusMarks["ompd:plan"] === "paused");
 }
 
 function publishRuntimes() {
@@ -1669,6 +1757,7 @@ function publishRuntimes() {
     const state = store.getState();
     return {
       id,
+      sessionId: state.session?.sessionId,
       path: state.session?.sessionFile ?? path,
       cwd: state.cwd,
       title: sessionTitle(state.session),

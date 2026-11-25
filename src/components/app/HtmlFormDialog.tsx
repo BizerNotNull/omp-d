@@ -2,6 +2,7 @@ import { createElement, Fragment, useId, useMemo, useRef, useState, type ReactNo
 import { HelpCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { DialogRequest } from "@/lib/omp/store";
+import { SendButton } from "./SendButton";
 
 type FormDataValues = Record<string, string | number | string[]>;
 type ChoiceGroup = { name: string; type: "radio" | "checkbox"; inputs: HTMLInputElement[]; other: boolean; anchor: Element };
@@ -195,8 +196,8 @@ export function HtmlFormDialog({ dialog, onAnswer, onCancel }: {
       <div className="space-y-3 text-xs leading-relaxed">{parsed.form ? Array.from(parsed.form.childNodes, (node, index) => render(node, String(index))) : "The agent supplied no form."}</div>
       {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
       <div className="flex justify-end gap-2">
-        <Button type="button" variant="outline" onClick={() => void onCancel(dialog.id)}>Cancel</Button>
-        <Button type="submit" disabled={!parsed.form}>Send answers</Button>
+        <Button type="button" variant="outline" size="sm" onClick={() => void onCancel(dialog.id)}>Cancel</Button>
+        <SendButton type="submit" disabled={!parsed.form}>Send answers</SendButton>
       </div>
     </form>
   );

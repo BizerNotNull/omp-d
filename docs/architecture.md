@@ -302,6 +302,20 @@ while restore is pending and after omp reports its session file.
   clearing the conversation, persists it for restart, and refreshes directory-
   scoped sessions, catalog, and Git status. The extension file lives for the
   child process lifetime; generation filtering rejects old-process updates.
+- Desktop plan mode lives in the bundled extension, using a branch-local
+  custom journal entry for explicit mode changes and proposed text. It limits
+  tool selection to native inspection tools and the proposal tool, and rejects
+  other agent tool calls while planning. The renderer displays its status and
+  review through extension UI frames. An automatic review request is routed
+  back through `/plan-review` on the owning RPC client, so manual and automatic
+  review both have access to the extension's session controls. The journal
+  also stores the model and effort from before planning. Approval resolves
+  the selected execution role, restores the execution tools, and either starts
+  an OMP session linked to the planning session, compacts the current context,
+  or keeps it. Fresh execution resets the owning renderer projection without
+  replacing its child or affecting other open sessions. With `plan.autosave`
+  enabled, the reviewed plan is written as standalone Markdown without
+  overwriting existing plans.
 
 ## Git queries
 

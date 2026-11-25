@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
-import { ArrowUp, FilePlus, ImagePlus, LoaderCircle, Square, X } from "lucide-react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
+import { isTauri } from "@tauri-apps/api/core";
+import type { DragDropEvent } from "@tauri-apps/api/webview";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { ImagePlus, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Popover, PopoverContent, PopoverDescription, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
+import { formatPathReferences } from "@/lib/omp/file-reference";
 import { PromptTextarea } from "./PromptText";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/omp/store";
@@ -10,6 +12,7 @@ import type { AvailableCommand, ImageContent } from "@/lib/omp/types";
 import { ComposerStatus } from "./ComposerStatus";
 import { AgentRequestCard } from "./AgentRequestCard";
 import { BtwPanel } from "./BtwPanel";
+import { SendButton } from "./SendButton";
 
 function readImage(file: File): Promise<ImageContent | undefined> {
   return new Promise((resolve) => {
@@ -29,21 +32,50 @@ function readImage(file: File): Promise<ImageContent | undefined> {
   });
 }
 
-export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, active }: { onOpenModels: () => void; onOpenSettings: () => void; onOpenUsage: () => void; active: boolean }) {
+const localCommands: AvailableCommand[] = [
+  { name: "model", description: "Choose a model for this session", source: "builtin" },
+  { name: "models", description: "Browse providers, roles, and models", source: "builtin" },
+  { name: "settings", description: "Configure Oh My Pi and desktop preferences", source: "builtin" },
+  { name: "usage", description: "Show provider plan usage", source: "builtin" },
+  { name: "new", description: "Start a new session", source: "builtin" },
+  { name: "resume", description: "Find a project session", input: { hint: "[session id or search]" }, source: "builtin" },
+  { name: "restart", description: "Restart the current agent and resume its session", source: "builtin" },
+  { name: "btw", description: "Ask a side question or open side question history", input: { hint: "[question]" }, source: "builtin" },
+  {
+    name: "goal", description: "Show the current goal or set an objective", source: "builtin",
+    subcommands: [
+      { name: "set", description: "Start a goal", usage: "<objective>" },
+      { name: "show", description: "Show current goal details" },
+      { name: "pause", description: "Pause the current goal" },
+      { name: "resume", description: "Resume a paused goal" },
+      { name: "drop", description: "Drop the current goal" },
+    ],
+  },
+];
+
+export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, onResume, active }: {
+  onOpenModels: () => void;
+  onOpenSettings: () => void;
+  onOpenUsage: () => void;
+  onResume: (query: string) => void;
+  active: boolean;
+}) {
   const draft = useAppStore((state) => state.draftText);
   const setDraft = useAppStore((state) => state.setDraftText);
   const images = useAppStore((state) => state.draftImages);
   const setImages = useAppStore((state) => state.setDraftImages);
   const submitting = useAppStore((state) => state.submitting);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
-  const [filePathOpen, setFilePathOpen] = useState(false);
-  const [filePath, setFilePath] = useState("");
-  const filePathRef = useRef<HTMLInputElement | null>(null);
+  const [draggingFiles, setDraggingFiles] = useState(false);
+  const readingDroppedImages = useAppStore((state) => state.droppedImagesPending) > 0;
+  const readDroppedImages = useAppStore((state) => state.readDroppedImages);
+  const dropTargetRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const suggestionsRef = useRef<HTMLDivElement | null>(null);
   const lastEditorToken = useRef(0);
 
   const busy = useAppStore((state) => state.busy);
+  const applyingPlan = useAppStore((state) => Boolean(state.statusMarks["ompd:plan-applying"]));
   const branching = useAppStore((state) => state.branching);
   const status = useAppStore((state) => state.status);
   const commands = useAppStore((state) => state.commands);
@@ -53,6 +85,42 @@ export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, active }: 
   const abort = useAppStore((state) => state.abort);
   const removeQueued = useAppStore((state) => state.removeQueued);
   const restart = useAppStore((state) => state.restart);
+  const newSession = useAppStore((state) => state.newSession);
+
+  const canDrop = active && !branching && (status === "ready" || status === "starting");
+  const onNativeDrop = useEffectEvent((event: DragDropEvent) => {
+    if (!canDrop || event.type === "leave") {
+      setDraggingFiles(false);
+      return;
+    }
+    const scale = window.devicePixelRatio;
+    const hit = document.elementFromPoint(event.position.x / scale, event.position.y / scale);
+    const overComposer = Boolean(hit && dropTargetRef.current?.contains(hit));
+    setDraggingFiles(overComposer && event.type !== "drop");
+    if (!overComposer || event.type !== "drop" || !event.paths.length) return;
+
+    const paths: string[] = [];
+    const imagePaths: string[] = [];
+    for (const path of event.paths) {
+      (/\.(?:png|jpe?g|gif|webp)$/i.test(path) ? imagePaths : paths).push(path);
+    }
+    insertFilePaths(paths);
+    textareaRef.current?.focus({ preventScroll: true });
+    if (imagePaths.length) void readDroppedImages(imagePaths);
+  });
+
+  useEffect(() => {
+    if (!canDrop || !isTauri()) return;
+    let disposed = false;
+    const subscription = getCurrentWindow().onDragDropEvent(({ payload }) => {
+      if (!disposed) onNativeDrop(payload);
+    }).catch(() => undefined);
+    return () => {
+      disposed = true;
+      void subscription.then((unlisten) => unlisten?.());
+      setDraggingFiles(false);
+    };
+  }, [canDrop]);
 
   useEffect(() => {
     if (active && (status === "ready" || status === "starting")) textareaRef.current?.focus();
@@ -65,51 +133,48 @@ export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, active }: 
     }
   }, [editorToken, active]);
 
-  const commandQuery = useMemo(() => {
-    if (!draft.startsWith("/")) return undefined;
-    const value = draft.slice(1);
-    if (/^goal\s+\S*$/.test(value)) return value.replace(/\s+/, " ");
-    if (/\s/.test(value)) return undefined;
-    return value;
-  }, [draft]);
-
+  const commandQuery = /^\/(\S*?)(?:[ \t]+([^\s]*))?$/.exec(draft);
+  const nameQuery = commandQuery?.[1].toLowerCase();
+  const subcommandQuery = commandQuery?.[2]?.toLowerCase();
   const suggestions = useMemo(() => {
-    if (commandQuery === undefined) return [];
-    const query = commandQuery.toLowerCase();
-    const available: AvailableCommand[] = [
-      { name: "model", description: "Choose a model for this session", source: "builtin" },
-      { name: "models", description: "Browse providers, roles, and models", source: "builtin" },
-      { name: "settings", description: "Configure Oh My Pi and desktop preferences", source: "builtin" },
-      { name: "usage", description: "Show provider plan usage", source: "builtin" },
-      { name: "btw", description: "Ask a side question or open side question history", input: { hint: "[question]" }, source: "builtin" },
-      { name: "goal", description: "Show the current goal or set an objective", source: "builtin" },
-      ...[
-        ["set", "Start a goal: /goal set <objective>"],
-        ["show", "Show current goal details"],
-        ["pause", "Pause the current goal"],
-        ["resume", "Resume a paused goal"],
-        ["drop", "Drop the current goal"],
-      ].map(([name, description]) => ({ name: `goal ${name}`, description, source: "builtin" })),
-      ...commands.filter((command) => !["model", "models", "settings", "usage", "btw", "goal", "guided-goal"].includes(command.name)),
-    ];
-    return available.filter(
-      (command) => command.name.toLowerCase().startsWith(query) && (query.includes(" ") || !command.name.includes(" ")),
-    );
-  }, [commands, commandQuery]);
+    if (nameQuery === undefined) return [];
+    const matches: AvailableCommand[] = [];
+    const seen = new Set<string>();
+    for (const command of [...localCommands, ...commands]) {
+      for (const name of [command.name, ...(command.aliases ?? [])]) {
+        if (seen.has(name) || name === "ompd-workspace" || name === "guided-goal") continue;
+        seen.add(name);
+        if (subcommandQuery === undefined) {
+          if (name.toLowerCase().startsWith(nameQuery)) matches.push(name === command.name ? command : { ...command, name });
+        } else if (name.toLowerCase() === nameQuery) {
+          for (const subcommand of command.subcommands ?? []) {
+            if (!subcommand.name.toLowerCase().startsWith(subcommandQuery)) continue;
+            matches.push({
+              name: `${name} ${subcommand.name}`,
+              source: command.source,
+              description: subcommand.description,
+              input: subcommand.usage ? { hint: subcommand.usage } : undefined,
+            });
+          }
+        }
+      }
+    }
+    return matches;
+  }, [commands, nameQuery, subcommandQuery]);
 
-  useEffect(() => setSuggestionIndex(0), [commandQuery]);
+  useEffect(() => setSuggestionIndex(0), [nameQuery, subcommandQuery]);
 
   useEffect(() => {
     suggestionsRef.current?.children[suggestionIndex]?.scrollIntoView({ block: "nearest" });
   }, [suggestionIndex, suggestions]);
 
-  const disabled = status !== "ready" || submitting || branching;
+  const disabled = status !== "ready" || submitting || branching || readingDroppedImages || applyingPlan;
   const btwCommand = /^\/btw(?:\s|$)/.test(draft.trimStart());
 
   function submit(behavior?: "followUp") {
     if (disabled) return;
     const text = draft.trim();
-    if (!text) return;
+    if (!text && !images.length) return;
     if (text === "/model" || text === "/models") {
       setDraft("");
       onOpenModels();
@@ -125,46 +190,43 @@ export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, active }: 
       onOpenUsage();
       return;
     }
+    if (text === "/new") {
+      setDraft("");
+      void newSession();
+      return;
+    }
+    const sessionSearch = /^\/resume(?:[\s:]+([\s\S]+))?$/.exec(text);
+    if (sessionSearch) {
+      setDraft("");
+      onResume(sessionSearch[1]?.trim() ?? "");
+      return;
+    }
     textareaRef.current?.focus({ preventScroll: true });
     void prompt(behavior);
   }
 
   function chooseCommand(command: AvailableCommand) {
-    if (command.name === "model" || command.name === "models") {
+    if (command.name === "model" || command.name === "models" || command.name === "settings" || command.name === "usage") {
       setDraft("");
-      onOpenModels();
-      return;
-    }
-    if (command.name === "settings") {
-      setDraft("");
-      onOpenSettings();
-      return;
-    }
-    if (command.name === "usage") {
-      setDraft("");
-      onOpenUsage();
+      if (command.name === "settings") onOpenSettings();
+      else if (command.name === "usage") onOpenUsage();
+      else onOpenModels();
       return;
     }
     setDraft(`/${command.name} `);
     textareaRef.current?.focus();
   }
 
-  function insertFilePath() {
+  function insertFilePaths(paths: string[]) {
+    if (!paths.length) return;
     const textarea = textareaRef.current;
-    const path = filePath.trim();
-    if (!textarea || !path || branching) return;
-
-    let fenceLength = 1;
-    for (const [run] of path.matchAll(/`+/g)) fenceLength = Math.max(fenceLength, run.length + 1);
-    const fence = "`".repeat(fenceLength);
-    const padding = path.startsWith("`") || path.endsWith("`") ? " " : "";
+    if (!textarea) return;
+    const references = formatPathReferences(paths);
     const { value, selectionStart, selectionEnd } = textarea;
     const before = selectionStart > 0 && /\S/.test(value[selectionStart - 1]) ? " " : "";
     const after = selectionEnd < value.length && /\S/.test(value[selectionEnd]) ? " " : "";
-    textarea.setRangeText(`${before}${fence}${padding}${path}${padding}${fence}${after}`, selectionStart, selectionEnd, "end");
+    textarea.setRangeText(`${before}${references}${after}`, selectionStart, selectionEnd, "end");
     setDraft(textarea.value);
-    setFilePathOpen(false);
-    textarea.focus({ preventScroll: true });
   }
 
   function onPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
@@ -180,12 +242,12 @@ export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, active }: 
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Enter" && !event.shiftKey && !event.altKey && draft.trim() === "/btw") {
+    if (event.nativeEvent.isComposing || branching) return;
+    if (event.key === "Enter" && !event.shiftKey && !event.altKey && `/${suggestions[suggestionIndex]?.name}` === draft.trim()) {
       event.preventDefault();
       submit();
       return;
     }
-    if (branching) return;
     if (suggestions.length > 0) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -321,7 +383,13 @@ export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, active }: 
             </div>
           )}
 
-          <div className="rounded-2xl border border-border/80 bg-card shadow-[0_8px_30px_-12px_rgba(0,0,0,0.45)] focus-within:border-ring/60 focus-within:ring-3 focus-within:ring-ring/10">
+          <div
+            ref={dropTargetRef}
+            className={cn(
+              "rounded-2xl border border-border/80 bg-card shadow-[0_8px_30px_-12px_rgba(0,0,0,0.45)] focus-within:border-ring/60 focus-within:ring-3 focus-within:ring-ring/10",
+              canDrop && draggingFiles && "border-ring ring-3 ring-ring/20",
+            )}
+          >
             <PromptTextarea
               ref={textareaRef}
               disabled={branching}
@@ -335,31 +403,9 @@ export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, active }: 
             />
             <div className="flex items-center gap-1.5 px-2 pb-2">
               <span className="pl-1.5 text-[10px] text-muted-foreground/70">
-                {status === "starting" ? "Starting omp… You can write while it loads." : busy ? "agent is working" : draft.startsWith("/") ? "slash command" : "Enter to send · Shift+Enter newline"}
+                {canDrop && draggingFiles ? "Drop to reference files or attach images" : readingDroppedImages ? "Loading dropped images…" : status === "starting" ? "Starting omp… You can write while it loads." : busy ? "agent is working" : draft.startsWith("/") ? "slash command" : "Enter to send · Shift+Enter newline"}
               </span>
               <div className="ml-auto flex items-center gap-1.5">
-                <Popover open={filePathOpen} onOpenChange={(open) => {
-                  setFilePathOpen(open);
-                  if (open) setFilePath("");
-                }}>
-                  <PopoverTrigger
-                    render={<Button type="button" variant="ghost" size="icon-sm" />}
-                    disabled={branching}
-                    aria-label="Insert file path"
-                    title="Insert file path"
-                    className="text-muted-foreground"
-                  >
-                    <FilePlus className="size-3.5" aria-hidden="true" />
-                  </PopoverTrigger>
-                  <PopoverContent side="top" align="end" initialFocus={filePathRef} className="w-80 max-w-[calc(100vw-24px)]">
-                    <PopoverTitle className="text-xs">Insert file path</PopoverTitle>
-                    <PopoverDescription className="text-xs">Enter an absolute path or a path relative to this workspace.</PopoverDescription>
-                    <form className="flex gap-1.5" onSubmit={(event) => { event.preventDefault(); insertFilePath(); }}>
-                      <Input ref={filePathRef} aria-label="Local file path" placeholder="src/main.tsx" spellCheck={false} value={filePath} onChange={(event) => setFilePath(event.target.value)} className="min-w-0" />
-                      <Button type="submit" size="sm" disabled={!filePath.trim() || branching}>Insert</Button>
-                    </form>
-                  </PopoverContent>
-                </Popover>
                 {images.length > 0 && (
                   <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
                     <ImagePlus className="size-3" /> {images.length}
@@ -377,15 +423,13 @@ export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, active }: 
                     <Square className="size-3.5 fill-current" />
                   </Button>
                 )}
-                <Button
-                  size="sm"
+                <SendButton
                   disabled={disabled || (!draft.trim() && images.length === 0)}
                   onClick={() => submit()}
-                  className="gap-1.5"
+                  pending={submitting || status === "starting"}
                 >
-                  {submitting || status === "starting" ? <LoaderCircle className="size-3.5 animate-spin" /> : <ArrowUp className="size-3.5" />}
                   {btwCommand ? draft.trim() === "/btw" ? "History" : "Ask" : busy ? "Steer" : "Send"}
-                </Button>
+                </SendButton>
               </div>
             </div>
           </div>

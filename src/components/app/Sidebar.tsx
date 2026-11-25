@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Ref } from "react";
 import { GitBranch, LoaderCircle, MessageSquarePlus, Pin, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +11,7 @@ import { ProjectSelector } from "./ProjectSelector";
 
 const ROW_HEIGHT = 72;
 
-export function Sidebar() {
+export function Sidebar({ searchRef }: { searchRef: Ref<HTMLInputElement> }) {
   const cwd = useAppStore((state) => state.cwd);
   const status = useAppStore((state) => state.status);
   const hydrating = useAppStore((state) => state.hydrating);
@@ -130,7 +130,7 @@ export function Sidebar() {
         </div>
         <div className="relative">
           <Search aria-hidden="true" className="pointer-events-none absolute top-2.5 left-2 size-3.5 text-muted-foreground" />
-          <Input aria-label="Search project sessions" placeholder="Search project sessions…" value={query} onChange={(event) => setQuery(event.target.value)} className="h-8 pr-7 pl-7 text-[11px]" />
+          <Input ref={searchRef} aria-label="Search project sessions" placeholder="Search project sessions…" value={query} onChange={(event) => setQuery(event.target.value)} className="h-8 pr-7 pl-7 text-[11px]" />
           {query && <button type="button" aria-label="Clear session search" className="absolute top-2 right-2 text-muted-foreground" onClick={() => setQuery("")}><X className="size-4" /></button>}
         </div>
         <div>

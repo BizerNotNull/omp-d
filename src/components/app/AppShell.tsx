@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "./Sidebar";
@@ -36,6 +36,7 @@ export function AppShell() {
   const conversationLoading = workspacePending || hydrating || branching;
   const theme = useAppStore((state) => state.preferences.theme);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const sessionSearchRef = useRef<HTMLInputElement>(null);
   const [modelsOpen, setModelsOpen] = useState(false);
   const [loginProvider, setLoginProvider] = useState<string>();
   const preferences = useAppStore((state) => state.preferences);
@@ -117,6 +118,27 @@ export function AppShell() {
     setModelsOpen(true);
   }
 
+  function resumeSession(query: string) {
+    const app = useAppStore.getState();
+    const path = sessionPathKey(query);
+    const open = query && app.openSessions.find((session) =>
+      session.sessionId === query || sessionPathKey(session.path) === path);
+    if (open) {
+      app.selectRuntime(open.id);
+      return;
+    }
+    const navigation = useSessionNavigation.getState();
+    const match = query && navigation.sessionListing?.sessions.find((session) =>
+      session.sessionId === query || sessionPathKey(session.path) === path);
+    if (match) {
+      void app.switchSession(match.path, match.cwd);
+      return;
+    }
+    navigation.setView("recent");
+    navigation.setQuery(query);
+    sessionSearchRef.current?.focus();
+  }
+
   function completeLogin() {
     setLoginProvider(undefined);
     setAuthRevision((revision) => revision + 1);
@@ -130,7 +152,7 @@ export function AppShell() {
       <div className={settingsOpen ? "hidden" : "flex h-full w-full flex-col bg-background text-foreground"}>
         {!cwd && <Welcome onOpenSettings={openSettings} />}
         {cwd && <div className="relative flex min-h-0 flex-1">
-          {!modelsOpen && <Sidebar />}
+          {!modelsOpen && <Sidebar searchRef={sessionSearchRef} />}
           <main className="relative flex min-w-0 flex-1 flex-col">
             {!modelsOpen && !conversationLoading && (
               <TopBar
@@ -146,7 +168,7 @@ export function AppShell() {
             {!modelsOpen && selection && <InspectorDetail selection={selection} data={inspector} onSelect={inspect} onClose={() => setInspection(undefined)} />}
             <div className={modelsOpen || selection || conversationLoading ? "hidden" : "@container flex min-h-0 flex-1 flex-col overflow-hidden"}>
               <ChatView key={`chat-${activeRuntimeId}`} />
-              <Composer key={`composer-${activeRuntimeId}`} active={!modelsOpen && !settingsOpen && !selection && !conversationLoading} onOpenModels={openModels} onOpenSettings={openSettings} onOpenUsage={openUsage} />
+              <Composer key={`composer-${activeRuntimeId}`} active={!modelsOpen && !settingsOpen && !selection && !conversationLoading} onOpenModels={openModels} onOpenSettings={openSettings} onOpenUsage={openUsage} onResume={resumeSession} />
             </div>
             {terminalWorkspace === cwd && (
               <Suspense fallback={terminalVisible && !settingsOpen && !conversationLoading ? <div role="status" className="flex items-center gap-2 border-t p-3 text-xs text-muted-foreground"><LoaderCircle aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />Loading terminal…</div> : null}>

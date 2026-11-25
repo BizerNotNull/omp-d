@@ -5,6 +5,7 @@ const commands: Array<{ generation: number; command: Record<string, unknown> }> 
 const stopped: number[] = [];
 let generation = 0;
 let acknowledgePrompt: (() => void) | undefined;
+let finishImageDrop: ((images: ({ mimeType: string; data: string } | null)[]) => void) | undefined;
 const restoredPaths = new Map<number, string>();
 const storage = new Map<string, string>([["ompd:lastCwd", "D:/project"]]);
 Object.assign(globalThis, {
@@ -37,6 +38,7 @@ mock.module("@tauri-apps/plugin-opener", () => ({ openUrl: async () => {} }));
 mock.module("@tauri-apps/api/core", () => ({
   isTauri: () => false,
   invoke: async (name: string, args: { generation: number; command: { type: string; id: string } & Record<string, unknown>; options: { cwd: string } }) => {
+    if (name === "attach_frontend") return 1;
     if (name === "start_agent") {
       const owner = ++generation;
       // Exercise ready-before-invoke resolution for simultaneous clients.
@@ -47,6 +49,11 @@ mock.module("@tauri-apps/api/core", () => ({
     if (name === "list_sessions") return { repositoryCwd: "D:/project", directories: [], sessions: [] };
     if (name === "model_catalog") return [];
     if (name === "model_roles") return {};
+    if (name === "read_dropped_images") {
+      const { promise, resolve } = Promise.withResolvers<({ mimeType: string; data: string } | null)[]>();
+      finishImageDrop = resolve;
+      return promise;
+    }
     if (name !== "rpc_send") throw new Error(`Unexpected invoke: ${name}`);
     const { generation: owner, command } = args;
     commands.push(args);
@@ -79,8 +86,9 @@ test("switching retains background execution, drafts, dialogs and command owners
   await useAppStore.getState().bootstrap();
   const first = useAppStore.getState();
   const firstOwner = first.startInfo!.generation;
+  first.setDraftText("Continue working");
+  const prompt = first.prompt();
   first.setDraftText("first draft");
-  const prompt = first.prompt("Continue working");
   await first.newSession();
   const second = useAppStore.getState();
   const secondOwner = second.startInfo!.generation;
@@ -107,7 +115,7 @@ test("switching retains background execution, drafts, dialogs and command owners
   expect(useAppStore.getState().dialogs[0].title).toBe("Second confirmation");
   expect(useAppStore.getState().draftText).toBe("second draft");
   acknowledgePrompt!();
-  expect(await prompt).toBe(true);
+  await prompt;
   expect(useAppStore.getState().activeRuntimeId).toBe(second.activeRuntimeId);
   await second.disconnect();
   expect(stopped).toContain(secondOwner);
@@ -142,4 +150,41 @@ test.each([
   expect(commands.slice(commandStart).filter(({ command }) => command.type === "switch_session"))
     .toHaveLength(1);
   await get().disconnect();
+});
+
+test("image drops finish in the originating draft and can be sent without text", async () => {
+  const get = useAppStore.getState;
+  const original = get().activeRuntimeId;
+  await get().switchSession("D:/sessions/drop.jsonl", "D:/project");
+  const origin = get();
+  const image = { mimeType: "image/png", data: "AQID" };
+  const missing = "D:\\test files\\bad`image.png";
+  try {
+    const loading = origin.readDroppedImages(["D:\\image.png", missing]);
+    origin.setDraftText("Existing draft");
+    const before = commands.length;
+    const blocked = origin.prompt();
+    expect(commands).toHaveLength(before);
+    await blocked;
+    get().selectRuntime(original);
+    const otherDraft = get().draftText;
+    finishImageDrop!([image, null]);
+    await loading;
+    expect(get().draftText).toBe(otherDraft);
+    expect(get().draftImages).toEqual([]);
+
+    get().selectRuntime(origin.activeRuntimeId);
+    expect(get().draftText).toBe("Existing draft ``D:\\test files\\bad`image.png``");
+    expect(get().draftImages).toEqual([{ type: "image", ...image }]);
+    origin.setDraftText("");
+    const sent = origin.prompt();
+    expect(commands.at(-1)).toMatchObject({
+      generation: origin.startInfo!.generation,
+      command: { type: "prompt", message: "", images: [{ type: "image", ...image }] },
+    });
+    acknowledgePrompt!();
+    await sent;
+  } finally {
+    await origin.disconnect();
+  }
 });

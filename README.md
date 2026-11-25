@@ -11,7 +11,10 @@ This app is designed to remain independent of the OMP process.It’s just that t
 - One of the ultimate goals is to support all TUI slash commands. For now, I’ve implemented support for the ones I use most frequently.
 - I have a multi-session implementation that I personally think is quite good, but it’s not very well-suited for development that spans multiple project directories.
 - Added special support for bar charts and Mermaid diagrams returned by the agent.
-- Some slash commands that have been specially optimized: `/models`, `/btw`, `/settings`, `/usage`, and `/wt`. These commands do indeed have an advantage in a GUI compared to a TUI.
+- `/models`, `/btw`, `/settings`, `/usage`, and `/wt` have desktop integrations.
+- Use `/plan` or `/plan <prompt>` to enter planning mode. The agent can inspect the workspace and propose a plan. Edit the proposal and explicitly approve it to execute, or reopen it with `/plan-review`. With a draft present, exiting planning mode asks for confirmation.
+- `/plan` uses the Oh My Pi `modelRoles.plan` assignment when configured. The review offers available execution roles in `cycleOrder` and can start a fresh session, compact the current session, or keep its context. Enable `plan.autosave` to save the approved Markdown under `.omp/plans/` or the directory set by `plan.autosaveDir`.
+- Use `/new` for a separate session, `/resume [session ID or search]` to find an existing session, and `/restart` to restart the current agent.
 
 ## Requirements
 
@@ -136,6 +139,7 @@ Protocol v1 is the baseline. The client negotiates v2 after `ready`, letting fra
 
 ## Limitations
 
+- TUI-only commands including `/vibe` and `/collab` still need desktop handlers.
 - Live subagent status and child transcripts require `set_subagent_subscription`, `get_subagents` and `get_subagent_messages`. Older runtimes retain clearly marked task snapshots. No `/btw` side questions, voice or dictation.
 - No host-tool or host-URI registration.
 - RPC mode has no approval request, so the UI does not show approve/deny prompts; it inherits the launch policy of the `omp` child.

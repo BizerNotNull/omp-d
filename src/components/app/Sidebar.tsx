@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Ref } from "react";
-import { GitBranch, LoaderCircle, MessageSquarePlus, Pin } from "lucide-react";
+import { GitBranch, LoaderCircle, MessageSquarePlus, Pencil, Pin } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { SearchInput } from "@/components/ui/search-input";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/omp/store";
@@ -20,6 +22,7 @@ export function Sidebar({ searchRef }: { searchRef: Ref<HTMLInputElement> }) {
   const activeRuntimeId = useAppStore((state) => state.activeRuntimeId);
   const newSession = useAppStore((state) => state.newSession);
   const switchSession = useAppStore((state) => state.switchSession);
+  const renameSession = useAppStore((state) => state.renameSession);
   const selectRuntime = useAppStore((state) => state.selectRuntime);
   const openSessions = useAppStore((state) => state.openSessions);
   const view = useSessionNavigation((state) => state.view);
@@ -47,6 +50,8 @@ export function Sidebar({ searchRef }: { searchRef: Ref<HTMLInputElement> }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const restoration = useRef({ key: "", top: 0, pending: true });
   const [viewport, setViewport] = useState({ top: 0, height: 600 });
+  const [renameDraft, setRenameDraft] = useState<{ runtimeId: number; value: string }>();
+  const activeRename = renameDraft?.runtimeId === activeRuntimeId ? renameDraft : undefined;
   const project = repositoryCwd ?? cwd ?? "";
   const scrollKey = JSON.stringify([sessionPathKey(project), view, scope, query]);
   const pinnedKeys = useMemo(() => new Set(pins.map(sessionPathKey)), [pins]);
@@ -110,7 +115,7 @@ export function Sidebar({ searchRef }: { searchRef: Ref<HTMLInputElement> }) {
 
   const start = Math.max(0, Math.floor(viewport.top / ROW_HEIGHT) - 4);
   const end = Math.min(rows.length, Math.ceil((viewport.top + viewport.height) / ROW_HEIGHT) + 4);
-  const heading = query ? "Search results" : `${view[0].toUpperCase()}${view.slice(1)} sessions`;
+  const listLabel = query ? "Search results" : `${view[0].toUpperCase()}${view.slice(1)} sessions`;
 
   return (
     <aside aria-label="Project and session navigation" className="flex w-[280px] min-w-0 max-w-[70vw] shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
@@ -118,30 +123,27 @@ export function Sidebar({ searchRef }: { searchRef: Ref<HTMLInputElement> }) {
         <ProjectSelector />
         <p className="truncate px-1 text-[10px] text-muted-foreground" title={switchingProject ?? project}>{switchingProject ?? (project || "Open a folder to get started")}</p>
         <div className="space-y-1.5">
-          <h2 className="px-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Worktrees</h2>
           <WorktreeSelector value={scope} onSelect={(value) => void selectWorktree(value)} />
           {query && scope !== "all" && <p className="px-1 text-[10px] text-muted-foreground">Searching all project Worktrees</p>}
         </div>
       </div>
       <div className="shrink-0 space-y-3 px-3 pt-3 pb-2">
-        <div className="flex items-center justify-between">
-          <h2 className="px-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Sessions</h2>
-          <Button variant="ghost" className="h-7 gap-1.5 px-2 text-[11px]" disabled={!cwd || conversationPending} onClick={() => void newSession()}><MessageSquarePlus aria-hidden="true" className="size-3.5" />New Session</Button>
+        <div className="flex items-center gap-1.5">
+          <SearchInput ref={searchRef} className="flex-1" aria-label="Search project sessions" placeholder="Search project sessions…" value={query} onChange={(event) => setQuery(event.target.value)} clear={query ? { label: "Clear session search", onClick: () => setQuery("") } : undefined} />
+          <Button type="button" variant="ghost" size="icon" aria-label="New Session" title="New Session" disabled={!cwd || conversationPending} onClick={() => void newSession()}><MessageSquarePlus aria-hidden="true" strokeWidth={1.5} /></Button>
         </div>
-        <SearchInput ref={searchRef} aria-label="Search project sessions" placeholder="Search project sessions…" value={query} onChange={(event) => setQuery(event.target.value)} clear={query ? { label: "Clear session search", onClick: () => setQuery("") } : undefined} />
         <div>
           <div aria-label="Session views" className="flex rounded-lg border border-sidebar-border p-0.5">
             {(["recent", "running", "pinned"] as const).map((candidate) => <button type="button" key={candidate} aria-pressed={candidate === view} onClick={() => setView(candidate)} className={cn("min-w-0 flex-1 rounded-md px-1 py-1.5 text-[11px] capitalize focus-visible:ring-2 focus-visible:ring-ring", candidate === view ? "bg-sidebar-accent font-medium" : "text-muted-foreground hover:text-foreground")}>{candidate}</button>)}
           </div>
         </div>
-        <h2 className="pt-1 text-[10px] text-muted-foreground">{heading}</h2>
       </div>
-      <div ref={scrollRef} aria-label={heading} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 [overflow-anchor:none]" onScroll={(event) => {
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 [overflow-anchor:none]" onScroll={(event) => {
         const element = event.currentTarget;
         setViewport({ top: element.scrollTop, height: element.clientHeight });
         if (!replacing && !restoration.current.pending) rememberScroll(scrollKey, element.scrollTop);
       }} onWheel={() => { if (!replacing) restoration.current.pending = false; }}>
-        <div role="list" aria-label="Sessions" style={{ height: rows.length * ROW_HEIGHT, position: "relative" }}>
+        <div role="list" aria-label={listLabel} style={{ height: rows.length * ROW_HEIGHT, position: "relative" }}>
           {rows.slice(start, end).map((item, offset) => {
             const current = item.runtime ? item.runtime.id === activeRuntimeId : sessionPathKey(item.path) === sessionPathKey(session?.sessionFile);
             const directory = listing?.directories.find((entry) => sessionPathKey(entry.cwd) === sessionPathKey(item.cwd));
@@ -161,6 +163,13 @@ export function Sidebar({ searchRef }: { searchRef: Ref<HTMLInputElement> }) {
                   <span className="flex w-full min-w-0 items-center gap-1 text-[10px] text-muted-foreground"><GitBranch aria-hidden="true" className="size-3 shrink-0" /><span className="min-w-0 truncate">{worktreeName(item.cwd, directory?.branch)}</span><span className="shrink-0">· {formatRelativeTime(item.modifiedMs)}</span></span>
                   {Boolean(item.runtime?.dialogs) && <span className="text-[10px] text-amber-500">Needs input</span>}
                 </button>
+                {current && !conversationPending && status === "ready" && (
+                  <button type="button" aria-label={`Rename session: ${item.title}`} title="Rename session"
+                    onClick={() => setRenameDraft({ runtimeId: activeRuntimeId, value: session?.sessionName ?? "" })}
+                    className="mr-1 shrink-0 rounded p-1.5 text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring">
+                    <Pencil aria-hidden="true" className="size-3" />
+                  </button>
+                )}
                 {item.path && <button type="button" aria-label={`${pinned ? "Unpin" : "Pin"} session ${item.title}`} aria-pressed={pinned} onClick={() => togglePin(item.path)} className={cn("mr-1.5 shrink-0 rounded p-1.5 text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring", !pinned && "opacity-0 group-hover:opacity-100 focus-visible:opacity-100")}><Pin aria-hidden="true" className={cn("size-3", pinned && "fill-current")} /></button>}
               </div>
             </div>;
@@ -172,6 +181,27 @@ export function Sidebar({ searchRef }: { searchRef: Ref<HTMLInputElement> }) {
         {!replacing && !loadingMore && !error && listing?.nextCursor && <button type="button" disabled={loading} onClick={() => void loadMore()} className="w-full p-3 text-[10px] text-muted-foreground hover:text-foreground">Load older sessions</button>}
       </div>
       <div className="shrink-0 border-t border-sidebar-border px-3 py-2.5 text-[10px] text-muted-foreground"><span className={cn("mr-2 inline-block size-1.5 rounded-full", status === "ready" ? "bg-emerald-500" : status === "error" ? "bg-destructive" : "bg-muted-foreground")} />{status === "ready" ? "connected" : status === "starting" ? "starting omp" : status === "error" ? "connection error" : "disconnected"}</div>
+      <Dialog open={Boolean(activeRename)} onOpenChange={(open) => { if (!open) setRenameDraft(undefined); }}>
+        <DialogContent className="sm:max-w-md">
+          <form className="grid gap-4" onSubmit={(event) => {
+            event.preventDefault();
+            if (!activeRename || !activeRename.value.trim()) return;
+            void renameSession(activeRename.value);
+            setRenameDraft(undefined);
+          }}>
+            <DialogHeader>
+              <DialogTitle>Rename session</DialogTitle>
+            </DialogHeader>
+            <Input aria-label="Session title" placeholder="Session title" autoFocus
+              value={activeRename?.value ?? ""}
+              onChange={(event) => activeRename && setRenameDraft({ ...activeRename, value: event.target.value })} />
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setRenameDraft(undefined)}>Cancel</Button>
+              <Button type="submit" disabled={!activeRename?.value.trim()}>Save</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </aside>
   );
 }

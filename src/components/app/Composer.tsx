@@ -2,8 +2,20 @@ import { useEffect, useEffectEvent, useMemo, useRef, useState, type ClipboardEve
 import { isTauri } from "@tauri-apps/api/core";
 import type { DragDropEvent } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { ImagePlus, Square, X } from "lucide-react";
+import { Brain, ChevronDown, Cpu, ImagePlus, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { modelLabel } from "@/lib/omp/format";
 import { formatPathReferences } from "@/lib/omp/file-reference";
 import { PromptTextarea } from "./PromptText";
 import { cn } from "@/lib/utils";
@@ -386,7 +398,7 @@ export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, onResume, 
           <div
             ref={dropTargetRef}
             className={cn(
-              "rounded-2xl border border-border/80 bg-card shadow-[0_8px_30px_-12px_rgba(0,0,0,0.45)] focus-within:border-ring/60 focus-within:ring-3 focus-within:ring-ring/10",
+              "@container rounded-2xl border border-border/80 bg-card shadow-[0_8px_30px_-12px_rgba(0,0,0,0.45)] focus-within:border-ring/60 focus-within:ring-3 focus-within:ring-ring/10",
               canDrop && draggingFiles && "border-ring ring-3 ring-ring/20",
             )}
           >
@@ -401,11 +413,11 @@ export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, onResume, 
               placeholder={busy ? "Steer the agent — Enter sends now, Alt+Enter queues a follow-up" : "Ask Oh My Pi anything, or type / for commands"}
               className="max-h-52 min-h-11 resize-none border-0 bg-transparent px-3.5 pt-3 pb-1 text-[13.5px] shadow-none focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
             />
-            <div className="flex items-center gap-1.5 px-2 pb-2">
-              <span className="pl-1.5 text-[10px] text-muted-foreground/70">
+            <div className="flex flex-wrap items-center gap-1.5 px-2 pb-2 @max-[10rem]:px-0.5">
+              <span className="min-w-0 flex-1 truncate pl-1.5 text-[10px] text-muted-foreground/70 @max-[18rem]:basis-full">
                 {canDrop && draggingFiles ? "Drop to reference files or attach images" : readingDroppedImages ? "Loading dropped images…" : status === "starting" ? "Starting omp… You can write while it loads." : busy ? "agent is working" : draft.startsWith("/") ? "slash command" : "Enter to send · Shift+Enter newline"}
               </span>
-              <div className="ml-auto flex items-center gap-1.5">
+              <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1.5">
                 {images.length > 0 && (
                   <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
                     <ImagePlus className="size-3" /> {images.length}
@@ -423,6 +435,7 @@ export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, onResume, 
                     <Square className="size-3.5 fill-current" />
                   </Button>
                 )}
+                <ComposerModelControls onOpenModels={onOpenModels} />
                 <SendButton
                   disabled={disabled || (!draft.trim() && images.length === 0)}
                   onClick={() => submit()}
@@ -437,6 +450,47 @@ export function Composer({ onOpenModels, onOpenSettings, onOpenUsage, onResume, 
         <ComposerStatus active={active} />
       </div>
     </div>
+  );
+}
+
+const modelControlClass = "min-w-0 gap-1 rounded-md text-xs text-muted-foreground @max-[22rem]:w-7 @max-[22rem]:px-0";
+
+function ComposerModelControls({ onOpenModels }: { onOpenModels: () => void }) {
+  const model = useAppStore((state) => modelLabel(state.session?.model));
+  const level = useAppStore((state) => state.session?.thinkingLevel ?? "off");
+  const levels = useAppStore((state) => state.thinkingLevels);
+  const setThinkingLevel = useAppStore((state) => state.setThinkingLevel);
+
+  return (
+    <>
+      <Button type="button" variant="ghost" size="sm" className={modelControlClass}
+        onClick={onOpenModels} aria-label={`Choose model: ${model}`} title={`Choose model: ${model}`}>
+        <Cpu aria-hidden="true" className="size-3.5 @min-[22rem]:hidden" />
+        <span className="max-w-32 truncate @max-[22rem]:hidden">{model}</span>
+        <ChevronDown aria-hidden="true" className="size-3 @max-[22rem]:hidden" />
+      </Button>
+
+      <DropdownMenu>
+        <DropdownMenuTrigger render={
+          <Button variant="ghost" size="sm" className={modelControlClass} aria-label={`Thinking level: ${level}`} title={`Thinking level: ${level}`} />
+        }>
+          <Brain aria-hidden="true" className="size-3.5 @min-[22rem]:hidden" />
+          <span className="capitalize @max-[22rem]:hidden">{level}</span>
+          <ChevronDown aria-hidden="true" className="size-3 @max-[22rem]:hidden" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side="top" align="end" className="w-44">
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>Thinking level</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            {levels.length ? (
+              <DropdownMenuRadioGroup value={level} onValueChange={(value) => void setThinkingLevel(value)}>
+                {levels.map((value) => <DropdownMenuRadioItem key={value} value={value} className="capitalize">{value}</DropdownMenuRadioItem>)}
+              </DropdownMenuRadioGroup>
+            ) : <DropdownMenuItem disabled>No levels</DropdownMenuItem>}
+          </DropdownMenuGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>
   );
 }
 

@@ -1,8 +1,8 @@
-import { AlertTriangle, FolderOpen, LoaderCircle, Settings2 } from "lucide-react";
+import { AlertTriangle, FolderOpen, LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAppStore } from "@/lib/omp/store";
 
-export function Welcome({ onOpenSettings }: { onOpenSettings: () => void }) {
+export function Welcome() {
   const status = useAppStore((state) => state.status);
   const error = useAppStore((state) => state.error);
   const cwd = useAppStore((state) => state.cwd);
@@ -10,7 +10,7 @@ export function Welcome({ onOpenSettings }: { onOpenSettings: () => void }) {
   const restart = useAppStore((state) => state.restart);
 
   return (
-    <div className="flex h-full flex-col items-center justify-center overflow-y-auto px-6 py-8">
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-6 py-8">
       <div className="w-full max-w-lg">
         <div className="mb-6 flex items-center gap-3">
           <div className="flex size-11 items-center justify-center rounded-xl border border-border bg-card text-2xl font-semibold shadow-sm">
@@ -19,15 +19,6 @@ export function Welcome({ onOpenSettings }: { onOpenSettings: () => void }) {
           <div>
             <h1 className="text-lg font-semibold tracking-tight">omp-d</h1>
           </div>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="ml-auto text-muted-foreground hover:text-foreground"
-            onClick={onOpenSettings}
-            aria-label="Settings"
-          >
-            <Settings2 className="size-4" />
-          </Button>
         </div>
 
         {status === "starting" ? (

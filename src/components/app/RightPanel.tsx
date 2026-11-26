@@ -3,6 +3,7 @@ import { Check, ChevronRight, ChevronUp, Circle, CircleAlert, CircleDot, LoaderC
 import { cn } from "@/lib/utils";
 import { formatCost, formatTokens } from "@/lib/omp/format";
 import type { ChangedFile, InspectorData, InspectorSelection } from "@/lib/omp/inspector-data";
+import type { InspectorAgent } from "@/lib/omp/inspector";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
 
 export function InspectorStatus({ status }: { status: string }) {
@@ -28,8 +29,8 @@ export function RightPanel({ data, planUsage, onInspect, onClose }: { data: Insp
   const { session, tasks, activeTask, agents, files, state, activity, sessionLoading, transcriptLoading } = data;
   const [changesExpanded, setChangesExpanded] = useState(false);
   const completed = tasks.filter((task) => task.status === "completed").length;
-  const activeAgents = agents.filter((agent) => agent.status !== "success");
-  const finishedAgents = agents.length - activeAgents.length;
+  const finishedAgents = agents.filter((agent) => agent.status === "success" || agent.status === "error");
+  const renderAgent = ({ id, name, status, snapshot, activity }: InspectorAgent) => <AgentRow key={id} name={name} status={status} snapshot={snapshot} activity={activity} onClick={() => onInspect({ kind: "agent", id })} />;
   const hasExecution = !sessionLoading && Boolean(session || data.runs.length || data.error);
   const usage = session?.contextUsage;
   const label = state === "error" ? "Needs attention" : state === "waiting" ? "Waiting" : state === "running" ? "Running" : "Completed";
@@ -52,14 +53,20 @@ export function RightPanel({ data, planUsage, onInspect, onClose }: { data: Insp
           </button>}
           {transcriptLoading ? (
             <p role="status" className="flex items-center gap-2 px-1 py-2 text-[11px] text-muted-foreground"><LoaderCircle aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />Loading agent activity…</p>
-          ) : <>
+          ) : (
             <div className={cn("flex flex-col gap-0.5", state === "completed" && "inspector-settled")}>
-              {activeAgents.filter((agent) => agent.status === "error" || agent.status === "waiting").map((agent) => <AgentRow key={agent.id} name={agent.name} status={agent.status} snapshot={agent.snapshot} activity={agent.activity} onClick={() => onInspect({ kind: "agent", id: agent.id })} />)}
+              {agents.filter((agent) => agent.status === "waiting").map(renderAgent)}
               <AgentRow name="Main" status={data.mainState} activity={activity} onClick={() => onInspect({ kind: "agent", id: "main" })} />
-              {activeAgents.filter((agent) => agent.status !== "error" && agent.status !== "waiting").map((agent) => <AgentRow key={agent.id} name={agent.name} status={agent.status} snapshot={agent.snapshot} activity={agent.activity} onClick={() => onInspect({ kind: "agent", id: agent.id })} />)}
+              {agents.filter((agent) => agent.status === "running").map(renderAgent)}
+              {finishedAgents.length > 0 && <details key={session?.sessionId} className="group/finished mt-1">
+                <summary className="flex cursor-pointer list-none items-center justify-between rounded px-2 py-1.5 text-[11px] text-muted-foreground hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+                  {finishedAgents.length} {finishedAgents.length === 1 ? "agent" : "agents"} finished
+                  <ChevronRight aria-hidden="true" className="size-3 group-open/finished:rotate-90" />
+                </summary>
+                <div className="flex flex-col gap-0.5">{finishedAgents.map(renderAgent)}</div>
+              </details>}
             </div>
-            {finishedAgents > 0 && <button type="button" onClick={() => onInspect({ kind: "agent", id: "all" })} className="mt-1 flex w-full items-center gap-2 rounded px-2 py-1.5 text-[11px] text-muted-foreground hover:bg-sidebar-accent"><Check className="size-3" />{finishedAgents} {finishedAgents === 1 ? "agent" : "agents"} completed<ChevronRight className="ml-auto size-3" /></button>}
-          </>}
+          )}
         </section>}
         {data.gitLoading && <p role="status" className="flex items-center gap-2 px-1 py-4 text-[11px] text-muted-foreground"><LoaderCircle aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />Loading Git changes…</p>}
         {files && files.length > 0 && <section aria-label="Changes" className="py-4">

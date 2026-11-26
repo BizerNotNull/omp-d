@@ -10,7 +10,7 @@ import { ToolCard } from "./ToolCard";
 export function InspectorDetail({ selection, data, onSelect, onClose }: { selection: InspectorSelection; data: InspectorData; onSelect: (value: InspectorSelection) => void; onClose: () => void }) {
   const [scope, setScope] = useState<"session" | "worktree">("worktree");
   const agent = selection.kind === "agent" ? data.agents.find((item) => item.id === selection.id) : undefined;
-  const agentId = selection.kind === "agent" && selection.id !== "main" && selection.id !== "all" ? selection.id : undefined;
+  const agentId = selection.kind === "agent" && selection.id !== "main" ? selection.id : undefined;
   const agentStatus = agent?.status;
   const refreshAgent = data.refreshSubagentMessages;
   useEffect(() => {
@@ -39,18 +39,16 @@ export function InspectorDetail({ selection, data, onSelect, onClose }: { select
       </div>}
       {selection.kind === "diff" && data.cwd && <FileDiff key={`${data.cwd}:${selection.path}`} cwd={data.cwd} path={selection.path} />}
       {selection.kind === "agent" && <div className="mx-auto max-w-3xl space-y-4">
-        {selection.id === "all" ? data.agents.map((item) => <button type="button" key={item.id} onClick={() => onSelect({ kind: "agent", id: item.id })} className="flex w-full items-center gap-3 border-b py-3 text-left text-sm hover:bg-muted"><InspectorStatus status={item.status} /><span>{item.name}</span><span className="min-w-0 truncate text-muted-foreground">{item.activity}</span></button>) : <>
-          <p className="flex items-center gap-2 text-sm"><InspectorStatus status={agent?.snapshot ? "snapshot" : agent?.status ?? data.mainState} />{agent?.activity ?? data.activity}</p>
-          {agent?.snapshot && <p className="text-xs text-muted-foreground">Last recorded task snapshot. Live status is unavailable for this agent.</p>}
-          {mainOutput && <p className="text-sm text-muted-foreground">{mainOutput}</p>}
-          {agent?.output && <pre className="scroll-thin overflow-auto whitespace-pre-wrap break-words font-mono text-xs">{stripAnsi(agent.output)}</pre>}
-          {(agent ? agent.runs : selection.id === "main" ? data.runs : []).map((run) => <ToolCard key={run.toolCallId} run={run} />)}
-          {selection.id === "main" && <>
-            {data.messages?.filter((message) => message.role === "assistant" && contentText(message.content)).map((message, index) => <pre key={index} className="whitespace-pre-wrap break-words text-sm leading-6">{contentText(message.content)}</pre>)}
-            {Object.entries(data.statusMarks).map(([key, value]) => <p key={key} className="text-xs text-muted-foreground">{key}: {value}</p>)}
-            {Object.entries(data.widgets).map(([key, lines]) => <section key={key}><h3 className="text-xs font-medium">{key}</h3><pre className="whitespace-pre-wrap break-words text-xs">{lines.join("\n")}</pre></section>)}
-            {data.notices.filter((notice) => !notice.message.startsWith("xd://: mounted")).slice(-20).reverse().map((notice) => <p key={notice.id} className={cn("text-xs", notice.kind === "error" ? "text-destructive" : "text-muted-foreground")}>{notice.message}</p>)}
-          </>}
+        <p className="flex items-center gap-2 text-sm"><InspectorStatus status={agent?.snapshot ? "snapshot" : agent?.status ?? data.mainState} />{agent?.activity ?? data.activity}</p>
+        {agent?.snapshot && <p className="text-xs text-muted-foreground">Last recorded task snapshot. Live status is unavailable for this agent.</p>}
+        {mainOutput && <p className="text-sm text-muted-foreground">{mainOutput}</p>}
+        {agent?.output && <pre className="scroll-thin overflow-auto whitespace-pre-wrap break-words font-mono text-xs">{stripAnsi(agent.output)}</pre>}
+        {(agent ? agent.runs : selection.id === "main" ? data.runs : []).map((run) => <ToolCard key={run.toolCallId} run={run} />)}
+        {selection.id === "main" && <>
+          {data.messages?.filter((message) => message.role === "assistant" && contentText(message.content)).map((message, index) => <pre key={index} className="whitespace-pre-wrap break-words text-sm leading-6">{contentText(message.content)}</pre>)}
+          {Object.entries(data.statusMarks).map(([key, value]) => <p key={key} className="text-xs text-muted-foreground">{key}: {value}</p>)}
+          {Object.entries(data.widgets).map(([key, lines]) => <section key={key}><h3 className="text-xs font-medium">{key}</h3><pre className="whitespace-pre-wrap break-words text-xs">{lines.join("\n")}</pre></section>)}
+          {data.notices.filter((notice) => !notice.message.startsWith("xd://: mounted")).slice(-20).reverse().map((notice) => <p key={notice.id} className={cn("text-xs", notice.kind === "error" && "text-destructive")}>{notice.message}</p>)}
         </>}
       </div>}
     </div>

@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { NativeSettings } from "./NativeSettings";
 import { pickerRowClass } from "./picker-styles";
 import { SettingsSelect, SettingsSelectOption } from "./SettingsSelect";
+import { WindowTitleBar } from "./WindowTitleBar";
 
 const sections = {
   native: "Oh My Pi",
@@ -76,13 +77,12 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
         onClose();
       }
     }}>
-      <header className="shrink-0 border-b bg-card">
-        <div className="flex min-h-12 items-center gap-2 px-3 md:px-5">
-          <Button variant="ghost" size="icon-sm" aria-label="Back from settings" title="Back from settings (Esc)" onClick={onClose} disabled={applyBusy}>
-            <ArrowLeft aria-hidden="true" className="size-4" />
-          </Button>
-          <h1 id="settings-title" ref={headingRef} tabIndex={-1} className="text-sm font-medium outline-none">Settings</h1>
-        </div>
+      <WindowTitleBar />
+      <header className="flex h-10 shrink-0 items-center gap-2 border-b bg-card px-2">
+        <Button variant="ghost" size="icon-sm" aria-label="Back from settings" title="Back from settings (Esc)" onClick={onClose} disabled={applyBusy}>
+          <ArrowLeft aria-hidden="true" className="size-4" />
+        </Button>
+        <h1 id="settings-title" ref={headingRef} tabIndex={-1} className="truncate text-xs font-medium outline-none">Settings</h1>
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">

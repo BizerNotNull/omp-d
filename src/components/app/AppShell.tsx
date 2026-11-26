@@ -1,8 +1,10 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { LoaderCircle } from "lucide-react";
+import { LoaderCircle, PanelRight } from "lucide-react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "./Sidebar";
-import { TopBar } from "./TopBar";
+import { Button } from "@/components/ui/button";
+import { WindowTitleBar } from "./WindowTitleBar";
+import { cn } from "@/lib/utils";
 import { ChatView } from "./ChatView";
 import { Composer } from "./Composer";
 import { RightPanel } from "./RightPanel";
@@ -150,18 +152,24 @@ export function AppShell() {
     <TooltipProvider>
       {settingsOpen && <SettingsPage onClose={() => setSettingsOpen(false)} />}
       <div className={settingsOpen ? "hidden" : "flex h-full w-full flex-col bg-background text-foreground"}>
-        {!cwd && <Welcome onOpenSettings={openSettings} />}
+        {!settingsOpen && <WindowTitleBar
+          onOpenSettings={openSettings}
+          actions={cwd && !modelsOpen && !conversationLoading && (
+            <Button variant="ghost" size="icon-sm"
+              className={cn("size-7 shrink-0 rounded-md text-muted-foreground hover:text-foreground", panelOpen && "bg-muted text-foreground")}
+              onClick={() => panelOpen ? closePanel() : setPanelOpen(true)}
+              aria-label="Toggle activity panel"
+              aria-pressed={panelOpen}
+              title="Toggle Inspector"
+            >
+              <PanelRight aria-hidden="true" className="size-4" />
+            </Button>
+          )}
+        />}
+        {!cwd && <Welcome />}
         {cwd && <div className="relative flex min-h-0 flex-1">
           {!modelsOpen && <Sidebar searchRef={sessionSearchRef} />}
           <main className="relative flex min-w-0 flex-1 flex-col">
-            {!modelsOpen && !conversationLoading && (
-              <TopBar
-                onOpenModels={openModels}
-                onOpenSettings={openSettings}
-                onTogglePanel={() => panelOpen ? closePanel() : setPanelOpen(true)}
-                panelOpen={panelOpen}
-              />
-            )}
             {modelsOpen && <div className={loginProvider ? "hidden" : "flex min-h-0 flex-1 flex-col"}><ModelPicker active={!settingsOpen && !loginProvider} onClose={() => setModelsOpen(false)} onLoginRequest={setLoginProvider} /></div>}
             {modelsOpen && loginProvider && <ProviderLogin key={`${cwd}:${loginProvider}`} provider={loginProvider} options={{ cwd, binary: preferences.binary.trim() || "omp", extraArgs: splitExtraArgs(preferences.extraArgs) }} onBack={() => setLoginProvider(undefined)} onSuccess={completeLogin} />}
             {!modelsOpen && conversationLoading && !selection && <div role="status" className="flex min-h-0 flex-1 items-center justify-center gap-2 text-sm text-muted-foreground"><LoaderCircle aria-hidden="true" className="size-4 animate-spin motion-reduce:animate-none" />{branching ? "Loading conversation branch…" : "Loading conversation…"}</div>}

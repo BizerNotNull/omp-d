@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Archive, ArrowUpRight, Brain, ChevronDown, ChevronLeft, ChevronRight, Lightbulb, LoaderCircle, Pencil, Scissors, Sparkles, SquareTerminal } from "lucide-react";
+import { Archive, ArrowUpRight, Brain, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Lightbulb, LoaderCircle, Pencil, Scissors, Sparkles, SquareTerminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PromptText, PromptTextarea } from "./PromptText";
 import type { MessageBranch } from "@/lib/omp/branches";
@@ -274,12 +274,14 @@ function AssistantBlock({
     if (block.type === "thinking") return "thinking" in block && Boolean(block.thinking);
     return block.type === "toolCall" || block.type === "image";
   });
-  const hasProse = blocks.some(
-    (block) =>
-      (block.type === "text" && "text" in block && String(block.text ?? "").trim()) ||
-      (block.type === "thinking" && "thinking" in block && String(block.thinking ?? "").trim()),
+  const hasText = blocks.some(
+    (block) => block.type === "text" && "text" in block && typeof block.text === "string" && block.text.trim(),
   );
   const usage = message.usage;
+  const showMetadata = (message.model || usage) && (hasText || blocks.some(
+    (block) => block.type === "thinking" && "thinking" in block && String(block.thinking ?? "").trim(),
+  ));
+  const canCopy = !streaming && hasText;
   const error = typeof message.errorMessage === "string" ? message.errorMessage : undefined;
 
   if (!hasVisible && !error && !streaming) return null;
@@ -317,19 +319,62 @@ function AssistantBlock({
         </div>
       )}
 
-      {hasProse && (message.model || usage) && (
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10.5px] text-muted-foreground">
-          <span>{message.model ?? "assistant"}</span>
-          {!streaming && typeof message.duration === "number" && (
-            <span>· {(message.duration / 1000).toFixed(1)}s</span>
+      {(showMetadata || canCopy) && (
+        <footer className="mt-1.5 flex items-center justify-end gap-2">
+          {showMetadata && (
+            <div className="mr-auto flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[10.5px] text-muted-foreground">
+              <span>{message.model ?? "assistant"}</span>
+              {!streaming && typeof message.duration === "number" && (
+                <span>· {(message.duration / 1000).toFixed(1)}s</span>
+              )}
+              {!streaming && usage && <span>· {formatTokens(usage.totalTokens)} tok</span>}
+              {!streaming && usage?.cost?.total !== undefined && usage.cost.total > 0 && (
+                <span>· {formatCost(usage.cost.total)}</span>
+              )}
+            </div>
           )}
-          {!streaming && usage && <span>· {formatTokens(usage.totalTokens)} tok</span>}
-          {!streaming && usage?.cost?.total !== undefined && usage.cost.total > 0 && (
-            <span>· {formatCost(usage.cost.total)}</span>
-          )}
-        </div>
+          {canCopy && <CopyResponseButton content={blocks} />}
+        </footer>
       )}
     </article>
+  );
+}
+
+function CopyResponseButton({ content }: { content: AssistantMessage["content"] }) {
+  const [result, setResult] = useState<"copied" | "failed">();
+
+  useEffect(() => {
+    if (result !== "copied") return;
+    const timer = window.setTimeout(() => setResult(undefined), 1500);
+    return () => window.clearTimeout(timer);
+  }, [result]);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(contentText(content));
+      setResult("copied");
+    } catch {
+      setResult("failed");
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <span role="status" className={result === "failed" ? "text-xs text-destructive" : "sr-only"}>
+        {result === "copied" ? "Copied" : result === "failed" ? "Could not copy response" : ""}
+      </span>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        aria-label="Copy raw response"
+        title="Copy raw response"
+        className="text-muted-foreground"
+        onClick={() => void copy()}
+      >
+        {result === "copied" ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+      </Button>
+    </div>
   );
 }
 
